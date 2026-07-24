@@ -11,6 +11,7 @@ UInventoryComponent::UInventoryComponent()
 void UInventoryComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	Items.SetNum(MaxSlots);
 }
 
 bool UInventoryComponent::AddItem(FPrimaryAssetId ItemID, int32 Count)
@@ -39,6 +40,59 @@ bool UInventoryComponent::AddItem(FPrimaryAssetId ItemID, int32 Count)
 	return AddItemInternal(ItemID, Count);
 }
 
+void UInventoryComponent::LoadData(TArray<FItemInstance>& InventoryItem)
+{
+	Items = InventoryItem;
+	
+	UAsyncDataManager* Mgr = UAsyncDataManager::Get(this);
+	if (!Mgr) return;
+	
+	TArray<FPrimaryAssetId> IDsToLoad;
+	for (const FItemInstance& Item : Items)
+	{
+		if (Item.IsValid() && !Mgr->IsAssetLoaded(Item.ItemID))
+		{
+			IDsToLoad.AddUnique(Item.ItemID);
+		}
+	}
+	
+	if (IDsToLoad.Num() > 0)
+	{
+		FOnBundleLoadComplete OnLoaded;
+		OnLoaded.BindLambda([this]()
+		{
+			for (int32 i =0; i < Items.Num();++i)
+			{
+				OnItemAdded.Broadcast(Items[i],i);
+			}
+		});
+		Mgr->LoadAssetsByID(IDsToLoad,{},OnLoaded);
+	}
+	else
+	{
+		for (int32 i = 0; i < Items.Num(); ++i)
+		{
+			OnItemAdded.Broadcast(Items[i], i);
+		}
+	}
+	
+}
+
+void UInventoryComponent::ClearAllItems()
+{
+	for (int32 i = 0; i < Items.Num(); ++i)
+	{
+		if (Items[i].IsValid())
+		{
+			FItemInstance RemovedItem = Items[i];
+			Items[i] = FItemInstance();
+			OnItemRemoved.Broadcast(RemovedItem, i);
+		}
+	}
+	Items.Empty();
+	Items.SetNum(MaxSlots);
+}
+
 bool UInventoryComponent::AddItemInternal(FPrimaryAssetId ItemID, int32 Count)
 {
 	UAsyncDataManager* Mgr = UAsyncDataManager::Get(this);
@@ -47,9 +101,18 @@ bool UInventoryComponent::AddItemInternal(FPrimaryAssetId ItemID, int32 Count)
 		return false;
 	}
 
-	UItemDataAsset* ItemData = Cast<UItemDataAsset>(Mgr->GetLoadedAsset(ItemID));
+	UObject* LoadedObj = Mgr->GetLoadedAsset(ItemID);
+	if (!LoadedObj)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] 에셋이 로드되지 않았습니다! ID: %s"), *ItemID.ToString());
+		return false;
+	}
+
+	UItemDataAsset* ItemData = Cast<UItemDataAsset>(LoadedObj);
 	if (!ItemData)
 	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] UItemDataAsset으로 캐스팅 실패! ID: %s, 실제 클래스: %s"), 
+			*ItemID.ToString(), *LoadedObj->GetClass()->GetName());
 		return false;
 	}
 	
@@ -80,7 +143,69 @@ bool UInventoryComponent::AddItemInternal(FPrimaryAssetId ItemID, int32 Count)
 		OnItemAdded.Broadcast(NewItem, NewSlot);
 	}
 	
+	for (int32 i = 0; i < Items.Num()&& Remaining > 0 ; ++i)
+	{
+		if (!Items[i].IsValid())
+		{
+			int32 AddCount = FMath::Min(Remaining, MaxStack);
+			Items[i] = FItemInstance(ItemID,AddCount);
+			Remaining -= AddCount;
+			
+			OnItemAdded.Broadcast(Items[i],i);
+		}
+	}
+	
 	return Remaining == 0;
+}
+
+bool UInventoryComponent::AddSoulGem(FPrimaryAssetId ItemID, const FSoulGemInstance& SoulGemData)
+{
+	UE_LOG(LogTemp, Warning, TEXT("[AddSoulGem] 호출됨 - ItemID: %s, GemName: %s"), *ItemID.ToString(), *SoulGemData.GemName.ToString());
+
+	UAsyncDataManager* Mgr = UAsyncDataManager::Get(this);
+	if (!Mgr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[AddSoulGem] AsyncDataManager가 null"));
+		return false;
+	}
+
+	auto PlaceGem = [this, ItemID, SoulGemData]()
+	{
+		for (int32 i = 0; i < Items.Num(); ++i)
+		{
+			if (!Items[i].IsValid())
+			{
+				Items[i].ItemID = ItemID;
+				Items[i].StackCount = 1;
+				Items[i].SoulGemData = SoulGemData;
+				Items[i].SoulGemData.ItemID = ItemID;
+				UE_LOG(LogTemp, Warning, TEXT("[AddSoulGem] PlaceGem 성공 - 슬롯: %d"), i);
+				OnItemAdded.Broadcast(Items[i], i);
+				return;
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[AddSoulGem] PlaceGem 실패: 빈 슬롯 없음"));
+	};
+
+	if (!Mgr->IsAssetLoaded(ItemID))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddSoulGem] DA 미로드 → 비동기 로드 시작: %s"), *ItemID.ToString());
+		TArray<FPrimaryAssetId> IDs;
+		IDs.Add(ItemID);
+
+		FOnBundleLoadComplete OnLoaded;
+		OnLoaded.BindLambda([this, ItemID, PlaceGem]()
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[AddSoulGem] 비동기 로드 완료 콜백 - ItemID: %s"), *ItemID.ToString());
+			PlaceGem();
+		});
+		Mgr->LoadAssetsByID(IDs, {}, OnLoaded);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[AddSoulGem] DA 이미 로드됨 → 즉시 배치"));
+	PlaceGem();
+	return true;
 }
 
 bool UInventoryComponent::RemoveItemByIndex(int32 SlotIndex, int32 Count)
@@ -93,11 +218,12 @@ bool UInventoryComponent::RemoveItemByIndex(int32 SlotIndex, int32 Count)
 	int32 Removed = FMath::Min(Count, Slot.StackCount);
 	Slot.StackCount -= Removed;
 
-	FItemInstance RemovedItem(Slot.ItemID, Removed);
+	FItemInstance RemovedItem = Slot;
+	RemovedItem.StackCount = Removed;
 
 	if (Slot.StackCount <= 0)
 	{
-		Items.RemoveAt(SlotIndex);
+		Items[SlotIndex] = FItemInstance();
 	}
 
 	OnItemRemoved.Broadcast(RemovedItem, SlotIndex);
@@ -118,11 +244,12 @@ bool UInventoryComponent::RemoveItemByID(FPrimaryAssetId ItemID, int32 Count)
 		Items[i].StackCount -= Removed;
 		Remaining -= Removed;
 
-		FItemInstance RemovedItem(ItemID, Removed);
+		FItemInstance RemovedItem = Items[i];
+		RemovedItem.StackCount = Removed;
 
 		if (Items[i].StackCount <= 0)
 		{
-			Items.RemoveAt(i);
+			Items[i] = FItemInstance();
 		}
 
 		OnItemRemoved.Broadcast(RemovedItem, i);
@@ -135,12 +262,6 @@ bool UInventoryComponent::SwapSlots(int32 FromIndex, int32 ToIndex)
 {
 	if (FromIndex == ToIndex) return false;
 	if (FromIndex < 0 || FromIndex >= MaxSlots || ToIndex < 0 || ToIndex >= MaxSlots) return false;
-
-	// 배열을 ToIndex까지 빈 슬롯으로 확장
-	while (Items.Num() <= FMath::Max(FromIndex, ToIndex))
-	{
-		Items.Add(FItemInstance());
-	}
 
 	Items.Swap(FromIndex, ToIndex);
 
@@ -175,17 +296,11 @@ bool UInventoryComponent::MoveItemTo(int32 FromIndex, UInventoryComponent* Targe
 	}
 	else
 	{
-		// 대상 슬롯이 비어있으면 이동
-		while (TargetInventory->Items.Num() <= ToIndex && TargetInventory->Items.Num() < TargetInventory->MaxSlots)
-		{
-			TargetInventory->Items.Add(FItemInstance());
-		}
-
 		if (!TargetInventory->Items.IsValidIndex(ToIndex)) return false;
 
 		TargetInventory->Items[ToIndex] = SourceItem;
-		Items.RemoveAt(FromIndex);
-
+		Items[FromIndex] = FItemInstance();
+		
 		OnItemRemoved.Broadcast(SourceItem, FromIndex);
 		TargetInventory->OnItemAdded.Broadcast(SourceItem, ToIndex);
 	}
@@ -212,6 +327,16 @@ FItemInstance UInventoryComponent::FindItemByID(FPrimaryAssetId ItemID) const
 		}
 	}
 	return FItemInstance();
+}
+
+int32 UInventoryComponent::GetCountByID(FPrimaryAssetId ItemID) const
+{
+	int32 Total = 0;
+	for (const FItemInstance& Item : Items)
+	{
+		if (Item.ItemID == ItemID) Total += Item.StackCount;
+	}
+	return Total;
 }
 
 int32 UInventoryComponent::FindStackableSlot(FPrimaryAssetId ItemID, int32 MaxStack) const

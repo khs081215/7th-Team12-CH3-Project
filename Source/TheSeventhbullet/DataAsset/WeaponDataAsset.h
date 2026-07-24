@@ -34,11 +34,13 @@ public:
 	
 public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	TSubclassOf<AWeaponBase> WeaponBaseBPClass; // WeaponBase
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	EWeaponTypes WeaponType; // 무기타입
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float BaseDamage; // 기본 데미지
+	float WeaponDamageMultiplier; // 무기별 데미지 밸런싱 계수
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float WeaponCritChanceBalance; // 무기별 크리티컬 확률 밸런싱 계수 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float WeaponCritDamageBalance; // 무기별 크리티컬 데미지 밸런싱 계수
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float FireInterval; // 발사간격(발사속도)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
@@ -64,13 +66,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
 	TObjectPtr<UStaticMesh> Mesh; // 메쉬
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|VFX")
-	TSoftObjectPtr<UParticleSystem> MuzzleFlashEffect; // 발사 이펙트(총구)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|VFX")
-	TSoftObjectPtr<UNiagaraSystem> ProjectileEffect; // 발사체 이펙트
+	TSoftObjectPtr<UNiagaraSystem> MuzzleFlashEffect; // 발사 이펙트(총구) + 발사체 이펙트
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|VFX")
 	TSoftObjectPtr<UParticleSystem> ImpactEffect; // Hit 이펙트
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
-	TSoftObjectPtr<UAnimMontage> AttackMontage; // 공격 애니메이션
+	TSoftObjectPtr<UAnimMontage> AttackMontage;// 공격 애니메이션
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
 	TSoftObjectPtr<UAnimMontage> ReloadMontage; // 재장전 애니메이션
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Sound")

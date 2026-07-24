@@ -11,6 +11,9 @@
 #include "AnimInstance/EnemyAnimInstance.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Boss/BossEnemyActorComponent.h"
+#include "Boss/PatternComponent/BossPatternComponentInterface.h"
+#include "Character/DamageType/PlayerSkillDamageType.h"
 #include "Components/CapsuleComponent.h"
 #include "DataAsset/EnemyDataAsset.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -18,15 +21,15 @@
 #include "Data/TableRowTypes.h"
 #include "System/MonsterManagerSubSystem.h"
 #include "Data/TableRowTypes.h"
+#include "Engine/DamageEvents.h"
 #include "Projectile/ProjectileStat.h"
+#include "System/MainGameMode.h"
+#include "System/GameInstance/MainGameInstance.h"
 
 
 // Sets default values
 AEnemyBase::AEnemyBase()
 {
-	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
 	//별도로 데이터를 주입하지 않은 캐릭터의 기본 스테이터스
 	MaxHealth = 100.0f;
 	NowHealth = MaxHealth;
@@ -34,7 +37,7 @@ AEnemyBase::AEnemyBase()
 	AttackPoint = 10.0f;
 	KnockbackStrengh = 200.0f;
 	bIsDead = false;
-	
+	GetCharacterMovement()->MaxStepHeight=60.0f;
 }
 
 // Called when the game starts or when spawned
@@ -62,13 +65,23 @@ void AEnemyBase::SetupEnemy(UEnemyDataAsset* LoadedData)
 {
 	EnemyData=LoadedData;
 	MaxHealth=EnemyData->MaxHealth;
-	NowHealth=MaxHealth;
 	ArmorPoint=EnemyData->ArmorPoint;
 	AttackPoint=EnemyData->AttackPoint;
 	AttackRadius=EnemyData->AttackRadius;
+	GetCharacterMovement()->MaxWalkSpeed=EnemyData->Speed;
 	HitParticle=EnemyData->HitParticle.Get();
 	HeadShotParticle=EnemyData->HeadShotParticle.Get();
 	USkeletalMeshComponent* EnemyMeshComp=this->GetMesh();
+	
+	
+	
+	//일차 기반으로 공격력 상승. 계산식은  체력 : x^2, 공격력, 방어력 : x^2*0.1f
+	GI=UMainGameInstance::Get(this);
+	CurrentDay=GI->CurrentDay;
+	MaxHealth=CurrentDay*CurrentDay*MaxHealth;
+	NowHealth=MaxHealth;
+	ArmorPoint=ArmorPoint*(CurrentDay*CurrentDay*0.1f);
+	AttackPoint=AttackPoint*(CurrentDay*CurrentDay*0.1f);
 	
 	//Mesh관련 처리
 	if (EnemyMeshComp)
@@ -98,14 +111,21 @@ void AEnemyBase::SetupEnemy(UEnemyDataAsset* LoadedData)
 		{
 			SpawnDefaultController();
 		}
-		//BehaviorTree 및 AttackRadius BB키 세팅
-		OnCharacterSetAI.Broadcast(EnemyData->EnemyBT.Get(),AttackRadius);
+		//BehaviorTree 및 AttackRadius, bIsLongRange, Speed BB키 세팅
+		OnCharacterSetAI.Broadcast(EnemyData->EnemyBT.Get(),AttackRadius,EnemyData->bIsLongRange,EnemyData->Speed,EnemyData->StrafeSpeed,EnemyData->EnemyAttackDelay);
+		
 	}
 	PStatus=MakeShared<FProjectileStatus>();
 	PStatus->StaticMesh=EnemyData->ProjectileStaticMesh.Get();
 	PStatus->Speed=EnemyData->ProjectileSpeed;
 	PStatus->bIsHoming=EnemyData->bIsHoming;
 	PStatus->Material=EnemyData->EnemyMaterial.Get();
+	
+	AMainGameMode* GM = AMainGameMode::Get(this);
+	if (GM)
+	{
+		GM->OnPlayerDeadEvent.AddDynamic(this,&AEnemyBase::OnPlayerDeath);
+	}
 	
 }
 
@@ -131,6 +151,7 @@ void AEnemyBase::ResetEnemy()
 	
 	//사망 상태를 다시 바꾼다.
 	bIsDead=false;
+	bDroppedItem=false;
 	
 	//일시정지되었던 애니메이션 재시작
 	GetMesh()->bPauseAnims=false;
@@ -164,6 +185,7 @@ void AEnemyBase::SetMonsterType(EMonsterType InEnemyMonsterType)
 }
 
 
+
 void AEnemyBase::EnemyTakePointDamage(AActor* DamagedActor, float Damage, class AController* InstigatedBy,
                                       FVector HitLocation, class UPrimitiveComponent* FHitComponent, FName BoneName,
                                       FVector ShotFromDirection,
@@ -177,11 +199,16 @@ void AEnemyBase::EnemyTakePointDamage(AActor* DamagedActor, float Damage, class 
 	}
 
 	//데미지 처리- 헤드샷 1.5배 데미지
-	SetHealth(NowHealth + ArmorPoint - (bIsHeadShot ? Damage * 1.5f : Damage));
-	UE_LOG(LogTemp, Warning, TEXT("LineTraceHit, %s, %f"), *BoneName.ToString(), NowHealth);
+	// 최종 데미지 : 데미지-방어력, 0보다 작아질 수는 없음.
+	FinalDamage=(bIsHeadShot ? Damage * 1.5f : Damage)-ArmorPoint;
+	if (FinalDamage<0)
+	{
+		FinalDamage=0;
+	}
+	SetHealth(NowHealth - FinalDamage);
 
 	// 적 캐릭터가 처음 죽었을 경우
-	if (!bIsDead && FMath::IsNearlyZero(NowHealth))
+	if (!bIsDead && FMath::IsNearlyZero(NowHealth)&&(!this->Tags.Contains("Boss")))
 	{
 		//사망 처리
 		bIsDead = true;
@@ -189,7 +216,7 @@ void AEnemyBase::EnemyTakePointDamage(AActor* DamagedActor, float Damage, class 
 		//BT에 정보 전달
 		OnCharacterDead.Broadcast();
 		
-
+		DropItem();
 		
 		//5초 후 오브젝트 풀로 돌아간다.
 		FTimerHandle ReturnToPoolTimer;
@@ -224,11 +251,48 @@ void AEnemyBase::EnemyTakePointDamage(AActor* DamagedActor, float Damage, class 
 			DisplayParticle(HitLocation, HitParticle);
 		}
 	}
+	
 }
+
+void AEnemyBase::DropItem()
+{
+	if (bDroppedItem) return;
+	bDroppedItem = true;
+
+	if (AMainGameMode* GM = AMainGameMode::Get(this))
+	{
+		GM->ItemDropFromMonster(EnemyMonsterType);
+	}
+}
+float AEnemyBase::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator,
+	AActor* DamageCauser)
+{
+	/*
+	FinalDamage=DamageAmount-ArmorPoint;
+	if (FinalDamage<0)
+	{
+		FinalDamage=0;
+	}
+	SetHealth(NowHealth - FinalDamage);
+	*/
+	
+	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+}
+
 
 void AEnemyBase::SetHealth(float NewHealth)
 {
 	NowHealth = FMath::Clamp(NewHealth, 0.0f, MaxHealth);
+}
+
+float AEnemyBase::GetHealth()
+{
+	return NowHealth;
+}
+
+float AEnemyBase::GetMaxHealth()
+{
+	return MaxHealth;
 }
 
 void AEnemyBase::DisplayParticle(FVector HitLocation, UParticleSystem* InParticle)
@@ -261,12 +325,43 @@ void AEnemyBase::DisplayParticle(FVector HitLocation, UParticleSystem* InParticl
 	}
 }
 
+void AEnemyBase::OnPlayerDeath()
+{
+	this->ReturnToPool();
+}
+
 void AEnemyBase::ReturnToPool()
 {
-	UE_LOG(LogTemp,Warning,TEXT("ReturnToPool"));
+
 	UMonsterManagerSubSystem* SubSystem = UMonsterManagerSubSystem::Get(this);
 	if (SubSystem)
 	{
+		if (EnemyMonsterType == EMonsterType::Boss)
+		{
+			AMainGameMode* GM = AMainGameMode::Get(this);
+			if (!GM) return;
+			
+			GM->NotifyBossDead();
+			
+			UBossEnemyActorComponent* BossEnemyActorComponent=FindComponentByClass<UBossEnemyActorComponent>();
+			if (BossEnemyActorComponent)
+			{
+				BossEnemyActorComponent->DestroyComponent();
+			}
+			
+			TArray<UBossPatternComponentInterface*> BossPatternComponents;
+			GetComponents<UBossPatternComponentInterface>(BossPatternComponents);
+
+			for (UBossPatternComponentInterface* BossPatternComponent : BossPatternComponents)
+			{
+				if (BossPatternComponent)
+				{
+					BossPatternComponent->DestroyComponent();
+				}
+			}
+			
+			
+		}
 		SubSystem->ReturnToPool(this);
 	}
 	else

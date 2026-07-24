@@ -7,9 +7,11 @@
 #include "ProjectileActor.generated.h"
 
 
+class AMainGameMode;
 class UProjectileMovementComponent;
 class USphereComponent;
 class AEnemyBase;
+class AMainGameMode;
 /**
  * 소환한 대상의 정면 방향으로 날아가며 Sphere Trace를 진행해, 맞으면 데미지를 입힙니다.
  */
@@ -36,7 +38,8 @@ public:
 	void SetActiveAndCollision(bool InActive);
 	
 	void LifeTimeEnd();
-
+protected:
+	virtual void BeginPlay() override;
 private:
 	UPROPERTY(VisibleAnywhere)
 	float AttackPoint=0.0f;	
@@ -54,12 +57,12 @@ private:
 	TObjectPtr<UStaticMeshComponent> ProjectileStaticMesh;
 	
 	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
+	TObjectPtr<UProjectileMovementComponent> ProjectileMovement; 
 	
 	UPROPERTY(VisibleAnywhere)
     TObjectPtr<AEnemyBase> Enemy;
 	
-	
+	AMainGameMode* GM = nullptr;
 	
 	FTimerHandle TimerHandle;
 	

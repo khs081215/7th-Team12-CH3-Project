@@ -3,19 +3,15 @@
 #include "Data/StatusTypes.h"
 #include "SoulGemInstance.generated.h"
 
-UENUM(BlueprintType)
-enum class ESpecialOptions : uint8
-{
-	None,
-	ReloadSpeed,
-	DoubleShot
-};
-
 USTRUCT(BlueprintType)
 struct THESEVENTHBULLET_API FSoulGemInstance
 {
 	GENERATED_BODY()
 	
+	// 이 소울젬의 DataAsset ID (저장/로드 시 아이콘 복원용)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SoulGem")
+	FPrimaryAssetId ItemID;
+
 	// GemName
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SoulGem")
 	FText GemName;
@@ -34,4 +30,38 @@ struct THESEVENTHBULLET_API FSoulGemInstance
 	// 참조를 하지는 않고, 어떤 재료로 조합된 것인지만 확인용.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SoulGem")
 	TArray<FName> SourceMaterialNames;
+
+	bool IsValid() const
+	{
+		return !GemName.IsEmpty();
+	}
+
+	FString ToDescriptionString() const
+	{
+		FString Info = FString::Printf(TEXT("등급: %d\n"), Grade);
+
+		const UEnum* StatusEnum = StaticEnum<EStatusType>();
+		for (const FStatusModifier& Mod : StatusModifiers)
+		{
+			FString StatusName = StatusEnum ? StatusEnum->GetDisplayNameTextByValue(static_cast<int64>(Mod.Status)).ToString() : TEXT("Unknown");
+			if (Mod.CalculationMethod == EStatusCalculationMethod::AddFlat)
+			{
+				Info += FString::Printf(TEXT("%s +%.0f\n"), *StatusName, Mod.Value);
+			}
+			else
+			{
+				Info += FString::Printf(TEXT("%s x%.1f\n"), *StatusName, Mod.Value);
+			}
+		}
+
+		const UEnum* SpecialEnum = StaticEnum<ESpecialOptions>();
+		for (ESpecialOptions Opt : SpecialOptions)
+		{
+			if (Opt == ESpecialOptions::None) continue;
+			FString OptName = SpecialEnum ? SpecialEnum->GetDisplayNameTextByValue(static_cast<int64>(Opt)).ToString() : TEXT("Unknown");
+			Info += FString::Printf(TEXT("특수: %s\n"), *OptName);
+		}
+
+		return Info;
+	}
 };

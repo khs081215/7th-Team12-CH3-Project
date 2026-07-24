@@ -6,6 +6,9 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "KismetAnimationLibrary.h"
+#include "Character/Component/CombatComponent.h"
+#include "Character/Component/EquipmentComponent.h"
+#include "Kismet/KismetMathLibrary.h"
 
 void UCharacterAnimInstance::NativeInitializeAnimation()
 {
@@ -34,17 +37,48 @@ void UCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		bIsFalling = MovementComp->IsFalling();
 	}
 	
-	// 회피 상태 계산
+	
 	AMainCharacter* MainCharacter = Cast<AMainCharacter>(OwnerCharacter);
 	if (MainCharacter)
 	{
+		
+		if(MainCharacter->EquipmentComponent->CurrentWeapon)
+		{
+			EWeaponTypes WeaponType = MainCharacter->EquipmentComponent->CurrentWeapon->WeaponType;
+
+			switch (WeaponType)
+			{
+			case EWeaponTypes::HandGun:
+				CurrentWeaponType = EAnimWeaponType::HandGun;
+				break;
+			case EWeaponTypes::AssaultRifle:
+				CurrentWeaponType = EAnimWeaponType::AssaultRifle;
+				break;
+			case EWeaponTypes::ShotGun:
+				CurrentWeaponType = EAnimWeaponType::ShotGun;
+				break;
+			}
+		}
+		else
+		{
+			CurrentWeaponType = EAnimWeaponType::None;
+		}
+		
+		// 회피 상태
 		bIsDodging = MainCharacter->IsDodge();
-	}
-	
-	// 조준 상태 계산
-	if (MainCharacter)
-	{
+		
+		// 조준 상태
 		bIsAiming = MainCharacter->IsAiming();
+		
+		// 사격 상태
+		bIsFiring = MainCharacter->IsFiring();
+		
+		// Pitch 값 가져오기
+		FRotator AimRotation = MainCharacter->GetBaseAimRotation();
+		FRotator ActorRotation = MainCharacter->GetActorRotation();
+		
+		FRotator DeltaRotation = UKismetMathLibrary::NormalizedDeltaRotator(AimRotation, ActorRotation);
+		AimPitch = FMath::FInterpTo(AimPitch, DeltaRotation.Pitch, DeltaSeconds, 15.0f);
 	}
 }
 
@@ -53,5 +87,40 @@ void UCharacterAnimInstance::AnimNotify_Throw()
 	if (AMainCharacter* MainCharacter = Cast<AMainCharacter>(TryGetPawnOwner()))
 	{
 		MainCharacter->ThrowGrenade();
+	}
+}
+
+void UCharacterAnimInstance::AnimNotify_EndSkill()
+{
+	if (AMainCharacter* MainCharacter = Cast<AMainCharacter>(TryGetPawnOwner()))
+	{
+		MainCharacter->bIsUsingSkill = false;
+		MainCharacter->CurrentState = EAnimState::None;
+		MainCharacter->ShowWeaponMesh();
+	}
+}
+
+void UCharacterAnimInstance::AnimNotify_RefillAmmo()
+{
+	if (AMainCharacter* MainCharacter = Cast<AMainCharacter>(TryGetPawnOwner()))
+	{
+		MainCharacter->CombatComponent->Reload();
+	}
+}
+
+void UCharacterAnimInstance::AnimNotify_Start_Invicible()
+{
+	if (AMainCharacter* MainCharacter = Cast<AMainCharacter>(TryGetPawnOwner()))
+	{
+		MainCharacter->bIsInvicible = true;
+	}
+}
+
+void UCharacterAnimInstance::AnimNotify_End_Invicible()
+{
+	if (AMainCharacter* MainCharacter = Cast<AMainCharacter>(TryGetPawnOwner()))
+	{
+		MainCharacter->bIsDodge = false;
+		MainCharacter->bIsInvicible = false;
 	}
 }

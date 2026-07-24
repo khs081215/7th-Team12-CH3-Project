@@ -1,11 +1,21 @@
 #include "MainGameMode.h"
 
 #include "MonsterManagerSubSystem.h"
+#include "Character/Component/EquipmentComponent.h"
+#include "DataAsset/MaterialDataAsset.h"
 #include "TheSeventhbullet/Character/MainCharacter.h"
 #include "TheSeventhbullet/Character/MainPlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/LevelStreaming.h"
+#include "GameInstance/MainGameInstance.h"
 #include "TheSeventhbullet/Manager/SyncDataManager.h"
 #include "TheSeventhbullet/Wave/WaveStateMachine.h"
+#include "TheSeventhbullet/Manager/UIManager.h"
+#include "TheSeventhbullet/UI/UITags.h"
+#include "Inventory/InventoryComponent.h"
+#include "Manager/SoundManager.h"
+#include "UI/PrologueWidget.h"
+#include "Windows/WindowsApplication.h"
 
 AMainGameMode::AMainGameMode()
 {
@@ -29,7 +39,7 @@ bool AMainGameMode::HasNextWave() const
 	USyncDataManager* DataManager = USyncDataManager::Get(this);
 	if (!DataManager) return false;
 	
-	if (DataManager->GetStageData(CurrentStageIndex).Waves.Num()
+	if (DataManager->GetRequestData(CurrentRequestID).Waves.Num()
 		<= CurrentWaveIndex)
 	{
 		return false;
@@ -42,11 +52,11 @@ void AMainGameMode::PrepareStageAndPreLoad()
 {
 	USyncDataManager* DataManager = USyncDataManager::Get(this);
 	
-	FStageRowData StageData = DataManager->GetStageData(CurrentStageIndex);
+	FRequestRowData RequestData = DataManager->GetRequestData(CurrentRequestID);
 	
 	TMap<EMonsterType, int32> MaxMonsterRequirements;
 	
-	for (const FWaveRowData& Wave : StageData.Waves)
+	for (const FWaveRowData& Wave : RequestData.Waves)
 	{
 		TMap<EMonsterType,int32> CurrentWaveCounts;
 		//최댓값 갱신
@@ -61,13 +71,10 @@ void AMainGameMode::PrepareStageAndPreLoad()
 		
 		for (auto& Elem : CurrentWaveCounts)
 		{
-			EMonsterType KeyType = Elem.Key;
-			int32 Required = Elem.Value;
-			
-			int32& GlobalMax = MaxMonsterRequirements.FindOrAdd(KeyType);
-			if (Required > GlobalMax)
+			int32& GlobalMax = MaxMonsterRequirements.FindOrAdd(Elem.Key);
+			if (Elem.Value > GlobalMax)
 			{
-				GlobalMax = Required;
+				GlobalMax = Elem.Value;
 			}
 		}
 		
@@ -88,6 +95,31 @@ void AMainGameMode::OnStageReady()
 {
 	UE_LOG(LogTemp, Log, TEXT("Stage Preparation Complete!"));
 	
+	AMainCharacter* Character = Cast<AMainCharacter>(UGameplayStatics::GetPlayerCharacter(this,0));
+	if (Character)
+	{
+		UEquipmentComponent* EquipmentComponent = Character->GetComponentByClass<UEquipmentComponent>();
+		if (EquipmentComponent)
+		{
+			EquipmentComponent->ApplyWeapon();
+		}
+	}
+	
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		UIMgr->Close(UITags::LoadingScreen);
+	}
+	USyncDataManager* DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return;
+	
+	const FRequestRowData RequestData = DataManager->GetRequestData(CurrentRequestID);
+	StageTimeLimit = RequestData.StageTimeLimit;
+	
+	StageElapsedTime = 0.0f;
+	CurrentWaveIndex = 0;
+	bBossDead = false;
+	
 	if (WaveStateMachine)
 	{
 		WaveStateMachine->ChangeState(EWaveState::Begin);
@@ -99,9 +131,9 @@ void AMainGameMode::SetupCurrentWaveData()
 	USyncDataManager* DataManager = USyncDataManager::Get(this);
 	if (!DataManager) return;
 	
-	FWaveRowData WaveData = DataManager->GetWaveData(CurrentStageIndex, CurrentWaveIndex);
-	const FStageRowData StageData = DataManager->GetStageData(CurrentStageIndex);
-	SpawnInterval = StageData.SpawnInterval;
+	FWaveRowData WaveData = DataManager->GetWaveData(CurrentRequestID, CurrentWaveIndex);
+	const FRequestRowData RequestData = DataManager->GetRequestData(CurrentRequestID);
+	SpawnInterval = RequestData.SpawnInterval;
 	SpawnTimer = 0.0f;
 	
 	AliveMonsterCount = 0;
@@ -154,12 +186,78 @@ void AMainGameMode::OnMonsterKilled()
 	AliveMonsterCount--;
 }
 
-void AMainGameMode::LoadLevel(FName OldLevel, FName NewLevel)
+void AMainGameMode::UpdateStageTimer(float DeltaTime)
 {
-	FLatentActionInfo LatentInfo;
-	//UGameplayStatics::UnloadStreamLevel(this,OldLevel,  LatentInfo,true);
-	UGameplayStatics::LoadStreamLevel(this, NewLevel,true,true, LatentInfo);
-	PrepareStageAndPreLoad();
+	StageElapsedTime += DeltaTime;
+}
+
+bool AMainGameMode::IsStageTimeOver() const
+{
+	if (StageTimeLimit <= 0.0f) return false; // 0이면 무제한
+	return StageElapsedTime >= StageTimeLimit;
+}
+
+float AMainGameMode::GetStageRemainingTime() const
+{
+	float Remaining = StageTimeLimit - StageElapsedTime;
+	return FMath::Max(0.0f, Remaining);
+}
+
+float AMainGameMode::GetStageTimeLimit() const
+{
+	return StageTimeLimit;
+}
+
+void AMainGameMode::SetStageResult(EStageResult InResult)
+{
+	CurrentStageResult = InResult;
+}
+
+EStageResult AMainGameMode::GetStageResult() const
+{
+	return CurrentStageResult;
+}
+
+const TArray<FDroppedMaterialsData>& AMainGameMode::GetStageRewardItems() const
+{
+	return StageRewardItems;
+}
+
+void AMainGameMode::CleanupAllMonsters()
+{
+	SpawnQueue.Empty();
+	
+	UMonsterManagerSubSystem* SubSystem = UMonsterManagerSubSystem::Get(this);
+	if (!SubSystem) return;
+	
+	// TODO : MonsterManagerSubSystem에 CleanupActivemonsters() 추가 필요
+	
+	AliveMonsterCount = 0;
+	
+}
+
+void AMainGameMode::OnPlayerDead()
+{
+	CurrentStageResult = EStageResult::PlayerDead;
+	if (WaveStateMachine)
+	{
+		WaveStateMachine->ChangeState(EWaveState::StageResult);
+	}
+	OnPlayerDeadEvent.Broadcast();
+}
+
+void AMainGameMode::IncreaseCurrentWaveIndex()
+{
+	CurrentWaveIndex++;
+}
+
+float AMainGameMode::GetIntermissionDuration() const
+{
+	USyncDataManager* DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return 0.0f;
+	
+	const FRequestRowData RequestData = DataManager->GetRequestData(CurrentRequestID);
+	return RequestData.IntermissionDuration;
 }
 
 void AMainGameMode::SpawnOneMonster()
@@ -182,13 +280,201 @@ void AMainGameMode::SpawnOneMonster()
 	}
 }
 
+void AMainGameMode::SetTargetRequestID(int32 InRequestID)
+{
+	CurrentRequestID = InRequestID;
+}
+
+void AMainGameMode::ItemDropFromMonster(EMonsterType MonsterType)
+{
+	// 싱크매니저 가져오기
+	USyncDataManager*  DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return;
+	// Request Index 를 현재 Request Index에 따라서 보상표가 달라지기 때문에 현재 Request Index로 가져오기.
+	UMainGameInstance* GI = GetGameInstance<UMainGameInstance>();
+	if (!GI) return;
+	FMonsterDropRowData Row =  DataManager->GetDropMaterialData(MonsterType);
+	const int32 StageIndex = FMath::Clamp(GI->CurrentDay - 1, 0, Row.Stages.Num() - 1);
+	if (!Row.Stages.IsValidIndex(StageIndex)) return;
+
+	const FStageDropData& DropData = Row.Stages[StageIndex];
+	if (DropData.DropRollsCount <= 0 || Row.DropEntries.Num() == 0) return;
+	
+	// 몬스터별 드랍 가능한 MaterialType을 결정. AllowedMaterialTypes가 비어있다면 전부 드랍하게 하면 되니까 0이어도 true
+	auto IsAllowedType = [&](EMaterialTypes Type) -> bool
+	{
+		return (Row.AllowedMaterialTypes.Num() == 0 || Row.AllowedMaterialTypes.Contains(Type));
+	};
+	// Grade에 따른 가중치를 가져옴.
+	auto GetGradeWeight = [&](int32 Grade) -> float
+	{
+		if (Grade <= 0)	return 0.0f;
+		const int32 Index = Grade - 1;
+		
+		// GradeWeight를 설정 안해두면 0으로 처리해서 해당 Grade의 아이템을 드랍하지 않음.
+		return DropData.GradeWeights.IsValidIndex(Index)
+			       ? DropData.GradeWeights[Index]
+			       : 0.0f;
+	};
+	
+	// 드랍풀 구조체를 안에서 선언했음. 여기서밖에 안 쓸듯?
+	struct FDropPool
+	{
+		const FMaterialDropEntry* DropEntry = nullptr;
+		float Weight = 0.0f;
+		FPrimaryAssetId AssetId; //AssetId 보관
+	};
+	
+	// 이 함수를 호출하는 몬스터에게서 얻은 아이템을 저장할 배열.
+	TArray<FDropPool> DropPool;
+	DropPool.Reserve(Row.DropEntries.Num());
+	
+	for (const FMaterialDropEntry& DropEntry : Row.DropEntries)
+	{
+		if (!DropEntry.Material.ToSoftObjectPath().IsValid()) continue;
+		
+		UMaterialDataAsset* MaterialData = DropEntry.Material.LoadSynchronous();
+		if (!MaterialData) continue;
+		
+		const int32 Grade = MaterialData->Grade;
+		if (!IsAllowedType(MaterialData->MaterialType)) continue; // 몬스터타입을 검사해서 드랍 제한.
+		const float GradeWeight = GetGradeWeight(Grade); // 스테이지별 Grade에 따른 가중치를 가져옴.
+		if (GradeWeight <= 0.f) continue;
+		
+		const float BaseWeight = FMath::Max(0.f, DropEntry.DropWeight); // 기본 가중치 
+		const float FinalWeight = BaseWeight*GradeWeight; // 최종가중치 = 기본가중치*Grade에 따른 가중치
+		if (FinalWeight <= 0.f) continue;
+		
+		//FPrimaryAssetId AssetId = UAssetManager::Get().GetPrimaryAssetIdForObject(MaterialData);
+		FPrimaryAssetId AssetId = MaterialData->GetPrimaryAssetId(); 
+
+		// 만약 위 코드로도 안 된다면 강제로 "Item" 타입으로 조립합니다.
+		if (!AssetId.IsValid())
+		{
+			AssetId = FPrimaryAssetId(FPrimaryAssetType("Item"), MaterialData->GetFName());
+		}
+
+		// 확인용 로그
+		UE_LOG(LogTemp, Warning, TEXT("Created AssetId: %s, IsValid: %d"), *AssetId.ToString(), AssetId.IsValid());
+		DropPool.Add({ &DropEntry, FinalWeight, AssetId});
+	}
+	
+	if (DropPool.Num() == 0) return;
+	
+	AMainCharacter* MainCharacter = Cast<AMainCharacter>(UGameplayStatics::GetPlayerCharacter(this,0));
+	if (!MainCharacter) return;
+	UInventoryComponent* Inventory = MainCharacter->GetComponentByClass<UInventoryComponent>();
+	if (!Inventory) return;
+	
+	// 이번 몬스터의 드랍결과를 임시로 저장하는 배열.
+	TArray<FDroppedMaterialsData> DroppedItemFromMonster;
+	
+	// 드랍 롤 횟수만큼 롤을 돌린다.
+	for (int32 i = 0; i <DropData.DropRollsCount; i++)
+	{		
+		// 아이템 드랍확률에 따라서 드랍이 발생했는지 여부를 검사. (0~1 사이의 값을 임의로 가져와서 드랍확률보다 높은지 판단하는 방식)
+		if (FMath::FRand() >= DropData.DropChance) continue;
+		
+		float TotalWeight = 0.0f;
+		for (const FDropPool& Pool : DropPool)
+		{
+			TotalWeight += Pool.Weight;
+		}
+		
+		if (TotalWeight <= 0.0f) continue;
+		
+		float Rolling = FMath::FRandRange(0.f, TotalWeight);
+		const FDropPool* PickedPool = nullptr;
+
+		for (const FDropPool& Pool : DropPool)
+		{
+			Rolling -= Pool.Weight;
+			if (Rolling <= 0.f)
+			{
+				PickedPool = &Pool;
+				break;
+			}
+		}
+
+		if (!PickedPool) continue;
+
+		// StageRewardItems / 브로드캐스트용 누적
+		StackItem(DroppedItemFromMonster, PickedPool->DropEntry->Material, 1);
+
+		// ★ DropPool에 저장해둔 AssetId로 즉시 인벤토리에 추가
+		if (Inventory && PickedPool->AssetId.IsValid())
+		{
+			bool bAdded = Inventory->AddItem(PickedPool->AssetId, 1);
+			if (!bAdded)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("인벤토리가 가득 차서 아이템(%s)을 획득할 수 없습니다!"), *PickedPool->AssetId.ToString());
+			}
+		}
+	}
+	
+	// 이번에 획득한 아이템을 브로드캐스트
+	OnMaterialDroppedMonsterKilled.Broadcast(DroppedItemFromMonster);
+	
+	// 스테이지 결과 보상 아이템 배열에 이번에 획득한 아이템을 추가해둠.
+	for (const FDroppedMaterialsData& DroppedItemData : DroppedItemFromMonster)
+	{
+		StackItem(StageRewardItems, DroppedItemData.Material, DroppedItemData.Count);
+	}
+}
+
+void AMainGameMode::SetTownPhase(ETownPhase NewPhase)
+{
+	if (CurrentTownPhase == NewPhase) return;
+	CurrentTownPhase = NewPhase;
+
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		if (NewPhase != ETownPhase::None)
+		{
+			UIMgr->Open(UITags::TownHUD);
+		}
+		else
+		{
+			UIMgr->Close(UITags::TownHUD);
+		}
+	}
+
+	OnTownPhaseChanged.Broadcast(NewPhase);
+}
+
+ETownPhase AMainGameMode::GetTownPhase() const
+{
+	return CurrentTownPhase;
+}
+
+bool AMainGameMode::CanTownInteract(ETownPhase RequiredPhase) const
+{
+	return CurrentTownPhase == RequiredPhase;
+}
+
+FText AMainGameMode::GetTownPhaseMessage() const
+{
+	switch (CurrentTownPhase)
+	{
+	case ETownPhase::AcceptRequest:
+		return FText::FromString(TEXT("의뢰를 받으세요"));
+	case ETownPhase::RequestAccepted:
+		return FText::FromString(TEXT("의뢰를 받았습니다"));
+	case ETownPhase::WaitForNextDay:
+		return FText::FromString(TEXT("다음날을 기다리세요"));
+	default:
+		return FText::GetEmpty();
+	}
+}
+
 void AMainGameMode::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
 	WaveStateMachine = NewObject<UWaveStateMachine>(this);
 	WaveStateMachine->Initialize(this);
-	
+
 	UMonsterManagerSubSystem* SubSystem = UMonsterManagerSubSystem::Get(this);
 	if (SubSystem)
 	{
@@ -197,7 +483,253 @@ void AMainGameMode::BeginPlay()
 			SubSystem->OnMonsterKilled.AddDynamic(this, &AMainGameMode::OnMonsterKilled);
 		}
 	}
-	PrepareStageAndPreLoad();
+	
+	if (PrologueAudioActorClass)
+	{
+		GetWorld()->SpawnActor<AActor>(PrologueAudioActorClass);
+	}
+
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		UUserWidget* Raw = UIMgr->Open(UITags::Prologue);
+
+		if (UPrologueWidget* Prologue = Cast<UPrologueWidget>(Raw))
+		{
+			if (Prologue)
+			{
+				// 프롤로그가 끝나면 프롤로그가 끝났다고 알려주고 -> HandlePrologueFinished에서 메인메뉴 UI Open
+				Prologue->OnPrologueFinished.AddDynamic(this, &AMainGameMode::HandlePrologueFinished);
+				Prologue->Start();
+				return;
+			}
+
+			// 실패 시 바로 메인메뉴로 감
+			UIMgr->Open(UITags::MainMenu);
+			USoundManager* SoundMgr = USoundManager::Get(GetWorld());
+			if (SoundMgr)
+			{
+				SoundMgr->PlayBGM(TEXT("MainMenuBGM"), 0.5f, 0.5f);
+			}
+		}
+	}
+}
+
+void AMainGameMode::StartGamePlay()
+{
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		UIMgr->Close(UITags::MainMenu);
+	}
+	USoundManager* SoundMgr = USoundManager::Get(this);
+	if (SoundMgr)
+	{
+		SoundMgr->PlayBGM(TEXT("TownBGM"), 0.7f, 0.7f);
+	}
+
+	SetTownPhase(ETownPhase::AcceptRequest);
+}
+
+void AMainGameMode::ReturnToTown()
+{
+	SetTownPhase(ETownPhase::None);
+
+	// 웨이브 상태 리셋
+	if (WaveStateMachine)
+	{
+		WaveStateMachine->ChangeState(EWaveState::None);
+	}
+	UMainGameInstance* GI = UMainGameInstance::Get(this);
+	if (!GI) return;
+	
+	GI->TotalRequestAttack += RequestAttack;
+	GI->TotalRequestHit += RequestHit;
+	
+	RequestAttack = 0;
+	RequestHit = 0;
+
+	// 스테이지 데이터 초기화
+	CurrentWaveIndex = 0;
+	CurrentRequestID = INDEX_NONE;
+
+	SpawnQueue.Empty();
+	SpawnTimer = 0.0f;
+	AliveMonsterCount = 0;
+	StageElapsedTime = 0.0f;
+	CurrentStageResult = EStageResult::None;
+	StageRewardItems.Empty();
+	
+	AMainCharacter* Character = Cast<AMainCharacter>(UGameplayStatics::GetPlayerCharacter(this,0));
+	if (!Character) return;
+	
+	UEquipmentComponent* EquipmentComponent = Character->GetComponentByClass<UEquipmentComponent>();
+	if (!EquipmentComponent) return;
+	
+	// 무기 선택 유지: 다음 스테이지에서 같은 무기를 사용하도록 PendingWeapon에 보존
+	if (EquipmentComponent->CurrentWeapon)
+	{
+		EquipmentComponent->PendingWeapon = EquipmentComponent->CurrentWeapon;
+	}
+	EquipmentComponent->CurrentWeapon = nullptr;
+	Character->WeaponMeshComponent->SetStaticMesh(nullptr);
+	//플레이어 스탯 및 초기화
+	Character->Revive();
+	// UI 정리 + 로딩 화면 표시
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		UIMgr->Close(UITags::StageSuccess);
+		UIMgr->Close(UITags::StageFail);
+		UIMgr->Close(UITags::HUD);
+		UIMgr->Close(UITags::Crosshair);
+		UIMgr->Open(UITags::LoadingScreen);
+	}
+
+	// L_Town을 제외한 모든 서브레벨 언로드
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
+
+		for (ULevelStreaming* StreamingLevel : StreamingLevels)
+		{
+			if (!StreamingLevel) continue;
+
+			FString ShortName = FPackageName::GetShortName(StreamingLevel->GetWorldAssetPackageName());
+			if (FName(*ShortName) == TownLevelName) continue;
+
+			if (StreamingLevel->IsLevelLoaded())
+			{
+				FLatentActionInfo LatentInfo;
+				UGameplayStatics::UnloadStreamLevel(this, FName(*ShortName), LatentInfo, false);
+			}
+		}
+	}
+	
+	FLatentActionInfo LatentInfo;
+	LatentInfo.CallbackTarget = this;
+	LatentInfo.ExecutionFunction = FName("OnTownLevelLoaded");
+	LatentInfo.Linkage = 0;
+	LatentInfo.UUID = GetUniqueID();
+
+	UGameplayStatics::LoadStreamLevel(this, TownLevelName, true, false, LatentInfo);
+	USoundManager* SoundMgr = USoundManager::Get(this);
+	if (SoundMgr)
+	{
+		SoundMgr->PlayBGM(TEXT("TownBGM"), 0.7f, 0.7f);
+	}
+}
+
+void AMainGameMode::OnTownLevelLoaded()
+{
+	if (PlayerSpawnPoint.Num() > 0 && PlayerSpawnPoint[0])
+	{
+		APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+		if (Pawn)
+		{
+			Pawn->SetActorLocation(PlayerSpawnPoint[0]->GetActorLocation());
+			Pawn->SetActorRotation(PlayerSpawnPoint[0]->GetActorRotation());
+		}
+	}
+
+	// 로딩 화면 닫기
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		UIMgr->Close(UITags::LoadingScreen);
+	}
+	
+	SetTownPhase(ETownPhase::WaitForNextDay);
+}
+
+void AMainGameMode::ReturnToMainMenu()
+{
+	SetTownPhase(ETownPhase::None);
+
+	// 웨이브 상태 리셋
+	if (WaveStateMachine)
+	{
+		WaveStateMachine->ChangeState(EWaveState::None);
+	}
+	
+	RequestAttack = 0;
+	RequestHit = 0;
+
+	// 스테이지 데이터 초기화
+	CurrentWaveIndex = 0;
+	CurrentRequestID = INDEX_NONE;
+	SpawnQueue.Empty();
+	SpawnTimer = 0.0f;
+	AliveMonsterCount = 0;
+	SpawnTimer = 0.0f;
+	StageElapsedTime = 0.0f;
+	StageRewardItems.Empty();
+	
+	UMainGameInstance* GI = UMainGameInstance::Get(this);
+	if (!GI) return;
+	
+	if (CurrentStageResult == EStageResult::PlayerDead)
+	{
+		UE_LOG(LogTemp,Log,TEXT("PlayerDead"));
+		GI->ResetGameData();
+	}
+	CurrentStageResult = EStageResult::None;
+	
+	AMainCharacter* Character = Cast<AMainCharacter>(UGameplayStatics::GetPlayerCharacter(this,0));
+	if (!Character) return;
+	Character->Revive();
+	UEquipmentComponent* EquipmentComponent = Character->GetComponentByClass<UEquipmentComponent>();
+	if (!EquipmentComponent) return;
+	
+	// 무기 선택 유지
+	if (EquipmentComponent->CurrentWeapon)
+	{
+		EquipmentComponent->PendingWeapon = EquipmentComponent->CurrentWeapon;
+	}
+	EquipmentComponent->CurrentWeapon = nullptr;
+	Character->WeaponMeshComponent->SetStaticMesh(nullptr);
+	//플레이어 스탯 및 초기화
+	Character->Revive();
+
+	// L_Town을 제외한 모든 서브레벨 언로드
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		const FName TownName = FName(TEXT("L_Town"));
+		const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
+
+		for (ULevelStreaming* StreamingLevel : StreamingLevels)
+		{
+			if (!StreamingLevel) continue;
+
+			FString ShortName = FPackageName::GetShortName(StreamingLevel->GetWorldAssetPackageName());
+			if (FName(*ShortName) == TownName) continue;
+
+			if (StreamingLevel->IsLevelLoaded())
+			{
+				FLatentActionInfo LatentInfo;
+				UGameplayStatics::UnloadStreamLevel(this, FName(*ShortName), LatentInfo, false);
+			}
+		}
+	}
+
+	// UI 정리 후 메인메뉴 표시
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
+	{
+		UIMgr->Close(UITags::StageSuccess);
+		UIMgr->Close(UITags::StageFail);
+		UIMgr->Close(UITags::HUD);
+		UIMgr->Close(UITags::BossHUD);
+		UIMgr->Close(UITags::Crosshair);
+		UIMgr->Open(UITags::MainMenu);
+	}
+	USoundManager* SoundMgr = USoundManager::Get(this);
+	if (SoundMgr)
+	{
+		SoundMgr->PlayBGM(TEXT("MainMenuBGM"), 0.7f, 0.7f);
+	}
 }
 
 void AMainGameMode::Tick(float DeltaSeconds)
@@ -210,17 +742,137 @@ void AMainGameMode::Tick(float DeltaSeconds)
 	}
 }
 
-int32 AMainGameMode::GetCurrentWaveIndex() const
+int32 AMainGameMode::GetAliveMonsterCount() const
 {
-	return CurrentStageIndex;
+	return AliveMonsterCount;
 }
 
-int32 AMainGameMode::GetCurrentSpawnIndex() const
+int32 AMainGameMode::GetCurrentRequestID() const
+{
+	return CurrentRequestID;
+}
+
+int32 AMainGameMode::GetCurrentWaveIndex() const
 {
 	return CurrentWaveIndex;
 }
 
-void AMainGameMode::IncreaseCurrentSpawnIndex()
+void AMainGameMode::StackItem(TArray<FDroppedMaterialsData>& ItemArray,
+	const TSoftObjectPtr<UMaterialDataAsset> Material, int32 Count)
 {
-	CurrentWaveIndex++;
+	if (!Material.ToSoftObjectPath().IsValid() || Count <= 0) return;
+
+	const FSoftObjectPath Key = Material.ToSoftObjectPath();
+	for (FDroppedMaterialsData& S : ItemArray)
+	{
+		if (S.Material.ToSoftObjectPath() == Key)
+		{
+			S.Count += Count;
+			return;
+		}
+	}
+
+	FDroppedMaterialsData NewStack;
+	NewStack.Material = Material;
+	NewStack.Count = Count;
+	ItemArray.Add(NewStack);
 }
+
+void AMainGameMode::HandlePrologueFinished()
+{
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsWithTag(this, FName("PrologueAudio"), Found);
+	for (AActor* A : Found)
+	{
+		A->Destroy();
+	}
+	
+	if (UUIManager* UI = UUIManager::Get(this))
+	{
+		UI->Close(UITags::Prologue);
+		UI->Open(UITags::MainMenu);
+		USoundManager* SoundMgr = USoundManager::Get(GetWorld());
+		if (SoundMgr)
+		{
+			SoundMgr->PlayBGM(TEXT("MainMenuBGM"), 0.5f, 0.5f);
+		}
+	}
+}
+
+void AMainGameMode::RewardsChangeBroadCasting()
+{
+	OnStageRewardItemsChanged.Broadcast(StageRewardItems);
+}
+
+bool AMainGameMode::HasActiveRequest() const
+{
+	return CurrentRequestID != INDEX_NONE;
+}
+
+float AMainGameMode::GetWaveStartDelay() const
+{
+	USyncDataManager* DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return 0.0f;
+	
+	const FRequestRowData RequestData = DataManager->GetRequestData(CurrentRequestID);
+	
+	return RequestData.WaveStartDelay;
+}
+
+void AMainGameMode::ClearStageRewards()
+{
+	StageRewardItems.Reset();
+}
+
+void AMainGameMode::TriggerBossPatternSpawn(int32 PatternWaveIndex)
+{
+	USyncDataManager* DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return;
+	
+	FWaveRowData WaveData = DataManager->GetWaveData(CurrentRequestID, PatternWaveIndex);
+	
+	for (const FWaveMonsterRowData& MonsterInfo : WaveData.Monster)
+	{
+		if (MonsterInfo.EnemyTypes == EMonsterType::None) continue;
+		
+		for (int32 i = 0; i < MonsterInfo.EnemyCount; i++)
+		{
+			SpawnQueue.Add(MonsterInfo.EnemyTypes);
+		}
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("[BossPattern] Wave %d 잡몹 %d마리 추가"),
+		PatternWaveIndex, SpawnQueue.Num());
+	
+}
+
+void AMainGameMode::NotifyBossDead()
+{
+	bBossDead = true;
+	OnBossWaveCleared.Broadcast();
+}
+
+bool AMainGameMode::IsBossWave() const
+{
+	USyncDataManager* DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return false;
+	
+	FWaveRowData WaveData = DataManager->GetWaveData(CurrentRequestID, CurrentWaveIndex);
+	return WaveData.bIsBossWave;
+}
+
+bool AMainGameMode::IsCurrentWaveManualTrigger() const
+{
+	USyncDataManager* DataManager = USyncDataManager::Get(this);
+	if (!DataManager) return false;
+	
+	FWaveRowData WaveData = DataManager->GetWaveData(CurrentRequestID, CurrentWaveIndex);
+	return WaveData.bManualTriggerOnly;
+}
+
+bool AMainGameMode::IsBossDead() const
+{
+	return bBossDead;
+}
+
+

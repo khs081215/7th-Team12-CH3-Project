@@ -3,15 +3,16 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AIController.h"
+#include "DetourCrowdAIController.h"
 #include "BehaviorTree/BehaviorTreeTypes.h"
 #include "EnemyAIControllerBase.generated.h"
 
+class AEnemyBase;
 /**
  * 적 AIController입니다.
  */
 UCLASS()
-class THESEVENTHBULLET_API AEnemyAIControllerBase : public AAIController
+class THESEVENTHBULLET_API AEnemyAIControllerBase : public ADetourCrowdAIController
 {
 	GENERATED_BODY()
 
@@ -26,14 +27,11 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
-	
-	UFUNCTION()
-	void SetBT(UBehaviorTree* EnemyBT);
 
 protected:
 	UPROPERTY(EditAnywhere)
 	TObjectPtr<UBehaviorTree> EnemyBehaviorTree;
-	TObjectPtr<UBlackboardComponent> BBComp;
+	UBlackboardComponent* BBComp;
 	
 	//bool BB 키(FName)
 	UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="BehaviorTree|BBKey")
@@ -43,6 +41,7 @@ protected:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="BehaviorTree|BBKey")
 	FName bIsHeadHitKey="bIsHeadHit";
 	
+	TObjectPtr<AEnemyBase> Enemy;
 	
 	//AI퍼셉션
 	UPROPERTY(EditDefaultsOnly, Category = "AI")
@@ -60,7 +59,16 @@ protected:
 	UFUNCTION()
 	void HeadHitEvent();
 	UFUNCTION()
-	void SetAI(UBehaviorTree* ParamBT,float AttackRadius);
+	void SetAI(
+		UBehaviorTree* ParamBT,
+		float AttackRadius,
+		bool  bIsLongRange,
+		float Speed,
+		float StrafeSpeed,
+		float EnemyAttackDelay
+		);
+
+	
 	
 	UFUNCTION()
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);

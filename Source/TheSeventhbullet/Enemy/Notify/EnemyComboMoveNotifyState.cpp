@@ -4,11 +4,12 @@
 #include "EnemyComboMoveNotifyState.h"
 
 #include "Enemy/EnemyBase.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 void UEnemyComboMoveNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-                                             float TotalDuration)
+                                             float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration);
+	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 	
 	Owner = MeshComp->GetOwner();
 	if (Owner == nullptr)
@@ -24,17 +25,34 @@ void UEnemyComboMoveNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, U
 }
 
 void UEnemyComboMoveNotifyState::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-	float FrameDeltaTime)
+	float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime);
+	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 	
 	FHitResult Hit;
-	if (OwnerEnemyBase==nullptr)return;
-	MoveVector=OwnerEnemyBase->GetActorForwardVector()*DashSpeed*FrameDeltaTime;
-	OwnerEnemyBase->AddActorWorldOffset(MoveVector, true, &Hit,ETeleportType::None);
-}
+	if (OwnerEnemyBase==nullptr)
+	{
+		return;
+	}
+	if (bIsForwardDirection)
+	{
 
-void UEnemyComboMoveNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+		MoveVector=OwnerEnemyBase->GetActorForwardVector();
+	}
+	else if (bIsZDirection)
+	{
+		UCharacterMovementComponent* EnemyCharacterMovementComponent=OwnerEnemyBase->GetCharacterMovement();
+		if (EnemyCharacterMovementComponent==nullptr)
+		{
+			return;
+		}
+		MoveVector=FVector(0,0,1.0f);
+	}
+	MoveVector*=DashSpeed*FrameDeltaTime;
+	OwnerEnemyBase->AddActorWorldOffset(MoveVector, true, &Hit,ETeleportType::None);
+}	
+
+void UEnemyComboMoveNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyEnd(MeshComp, Animation);
+	Super::NotifyEnd(MeshComp, Animation, EventReference);
 }

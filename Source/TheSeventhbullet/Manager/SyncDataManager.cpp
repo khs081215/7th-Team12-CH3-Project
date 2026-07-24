@@ -17,27 +17,52 @@ void USyncDataManager::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	
-	LoadAndCacheTable<FStageRowData, int32>(
+	LoadAndCacheTable<FRequestRowData, int32>(
 		TEXT("/Game/TheSeventhBullet/DataTable/DT_Wave"),
-		StageCache,
-		[](const FStageRowData* Row) { return Row->WaveNumber;}
+		RequestCache,
+		[](const FRequestRowData* Row) { return Row->RequestID;}
 	);
 	
 	LoadAndCacheTable<FMonsterRowData, EMonsterType>(
 		TEXT("/Game/TheSeventhBullet/DataTable/DT_Monster"),
 		MonsterCache,
-		[](const FMonsterRowData* Row) {return Row->EnemyType;}
-		);
+		[](const FMonsterRowData* Row) { return Row->EnemyType; }
+	);
+
+	LoadAndCacheTable<FMonsterDropRowData, EMonsterType>(
+		TEXT("/Game/TheSeventhBullet/DataTable/DT_ItemDropTable"),
+		ItemDropCache,
+		[](const FMonsterDropRowData* Row) { return Row->MonsterType; }
+	);
+
+	LoadAndCacheTable<FMaterialRecycleRowData, int32>(
+		TEXT("/Game/TheSeventhBullet/DataTable/DT_MaterialRecycleTable"),
+		MaterialRecycleCache,
+		[](const FMaterialRecycleRowData* Row){ return Row->Grade; }
+	);
 }
 
-FStageRowData USyncDataManager::GetStageData(int32 StageIndex) const
+FRequestRowData USyncDataManager::GetRequestData(int32 RequestID) const
 {
-	return StageCache[StageIndex];
+	const FRequestRowData* Found = RequestCache.Find(RequestID);
+	if (!Found)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SyncDataManager] RequestID %d not found"), RequestID);
+		return FRequestRowData();
+	}
+	return *Found;
 }
 
-int32 USyncDataManager::GetTotalWaveCount() const
+int32 USyncDataManager::GetTotalRequestCount() const
 {
-	return StageCache.Num();
+	return RequestCache.Num();
+}
+
+TArray<int32> USyncDataManager::GetAllRequestIDs() const
+{
+	TArray<int32> Keys;
+	RequestCache.GetKeys(Keys);
+	return Keys;
 }
 
 FMonsterRowData USyncDataManager::GetMonsterData(const EMonsterType Tag) const
@@ -50,8 +75,34 @@ FMonsterRowData USyncDataManager::GetMonsterData(const EMonsterType Tag) const
 	return *Found;
 }
 
-FWaveRowData USyncDataManager::GetWaveData(int32 StageIndex, int32 WaveIndex)
+FWaveRowData USyncDataManager::GetWaveData(int32 RequestID, int32 WaveIndex)
 {
-	return StageCache[StageIndex].Waves[WaveIndex];
+	const FRequestRowData* Found = RequestCache.Find(RequestID);
+	if (!Found || !Found->Waves.IsValidIndex(WaveIndex))
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SyncDataManager] GetWaveData failed - RequestID: %d, WaveIndex: %d"), RequestID, WaveIndex);
+		return FWaveRowData();
+	}
+	return Found->Waves[WaveIndex];
+}
+
+FMonsterDropRowData USyncDataManager::GetDropMaterialData(EMonsterType MonsterType) const
+{
+	const FMonsterDropRowData* Found = ItemDropCache.Find(MonsterType);
+	if (!Found)
+	{
+		return FMonsterDropRowData();
+	}
+	return *Found;
+}
+
+FMaterialRecycleRowData USyncDataManager::GetRecycleResultData(const int32 Grade) const
+{
+	const FMaterialRecycleRowData* Found = MaterialRecycleCache.Find(Grade);
+	if (!Found)
+	{
+		return FMaterialRecycleRowData();
+	}
+	return *Found;
 }
 

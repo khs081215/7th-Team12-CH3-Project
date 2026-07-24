@@ -3,81 +3,38 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Data/StatusTypes.h"
 #include "GameFramework/Character.h"
 #include "MainCharacter.generated.h"
 
+
 class UInventoryComponent;
-class UCombatComponent; // CombatComponent 전방선언
+class UCombatComponent; // 주현 : CombatComponent 전방선언
+class UWeaponDataAsset; // 주현 : WeaponDataAsset 전방선언
 class UEquipmentComponent; // EquipmentComponent 전방선언
-class UGemStatusComponent; // StatusComponent 전방선언
-class AWeaponBase; // WeaponBase 전방선언
+class UStatusComponent; // StatusComponent 전방선언
 class UInputAction;
 class USpringArmComponent;
 class UCameraComponent;
+class IInteractableInterface;
 
 struct FInputActionValue;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHPChanged, float, CurrentHP, float, MaxHP);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnStaminaChanged, float, CurrentStamina, float, MaxStamina);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPotionChanged, int32, Count);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPotionCooldownStarted, float, CoolTime);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSkillCooldownStarted, float, CoolTime);
 
 UENUM(BlueprintType)
 enum class EAnimState : uint8
 {
 	None,
 	Skill,				
-	Aim_Rifle,
-	Aim_Shotun,
-	Aim_Pistol,
-	Fire_Rifle,  
-	Fire_ShotGun,
-	Fire_Pistol,
-	Fire_Aim_Rifle,  
-	Fire_Aim_ShotGun,
-	Fire_Aim_Pistol, 
-	Reload_Rifle,  
-	Reload_ShotGun,
-	Reload_Pistol, 
-	DodgeFwd,
-	DodgeBwd,
-	DodgeRight,
-	DodgeLeft
+	Dodge,
+	Death
 };
 
-USTRUCT(BlueprintType)
-struct FCharacterStat
-{
-	GENERATED_BODY()
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 HP;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 Stamina;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 Attack;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 Defence;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 CriticalChance;//크리 확률
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 CriticalHitChance;//크피 확률
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stat")
-	int32 Speed;
-	
-	//기본 생성자 (초기값 세팅)
-	FCharacterStat()
-	{
-		HP = 100;
-		Stamina = 100;
-		Attack = 100;
-		Defence = 100;
-		CriticalChance = 30;
-		CriticalHitChance = 30;
-		Speed = 600;
-	}
-};
 
 UCLASS()
 class THESEVENTHBULLET_API AMainCharacter : public ACharacter
@@ -89,54 +46,58 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-	/*virtual float TakeDamage(
-		float DamageAmount,
-		struct FDamageEvent const& DamageEvent,
-		class AController* EventInstigator,
-		AActor* DamageCauser
-		) override;*/
-	
-	EAnimState CurrentState = EAnimState::None;	// 애니메이션 상태별 출력을 위한 Enum
 	
 	UPROPERTY(EditDefaultsOnly, Category="Animation|Montage")
 	TMap<EAnimState, TObjectPtr<UAnimMontage>> MontagesMap;	// 애니메이션 몽타주 저장 변수
-
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Status", meta = (AllowPrivateAccess = "true"))
+	FCharacterStat TotalStatus;
+	
+	UPROPERTY()
+	int32 Gold = 100000000;
+	
 public:	
+	EAnimState CurrentState = EAnimState::None;	// 애니메이션 상태별 출력을 위한 Enum
 	
 #pragma region Status
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Character")
+	float SprintMultiplier;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Character")
-	int32 MaxHP;	// 최대 체력
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Character")
-	int32 CurrentHP;	// 현재 체력
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Character")
-	int32 MaxStamina;	// 최대 스테미나
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Character")
-	int32 CurrentStamina;	// 현재 스테미나
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Character")
-	int32 DodgeCost;	// 회피 소모 스테미나
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Character")
-	float DodgeDistance;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Character")
-	float MaxSpeed;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Character")
-	float SprintMultifier;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Character")
-	float AimSpeed;
+	float AimMultiplier;
+
+	// 스태미나: Dodge 소모량
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stamina")
+	float DodgeStaminaCost = 20.f;
+
+	// 스태미나: 초당 회복량
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stamina")
+	float StaminaRegenRate = 10.f;
+
+	// 스태미나: 소모 후 회복 시작까지 대기 시간(초)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stamina")
+	float StaminaRegenDelay = 1.f;
 	
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
+
+	void UsePotion();
+
 #pragma endregion
 
 #pragma region Components
 	
+	// 주현 : WeaponMeshComponent 장착하면 보이는 무기 메쉬
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="Component")
+	TObjectPtr<UStaticMeshComponent> WeaponMeshComponent;
 	// 주현 : CombatComponent
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="CombatComponent")
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="Component")
 	TObjectPtr<UCombatComponent> CombatComponent;
 	// 주현 : EquipmentComponent
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="CombatComponent")
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="Component")
 	TObjectPtr<UEquipmentComponent> EquipmentComponent;
 	// 주현 : StatusComponent
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="CombatComponent")
-	TObjectPtr<UGemStatusComponent> StatusComponent;
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="Component")
+	TObjectPtr<UStatusComponent> StatusComponent;
 	
 #pragma endregion
 	
@@ -145,6 +106,10 @@ public:
 	bool bIsDodge = false;		// 회피 동작 상태
 	bool bIsInvicible = false;	// 무적 상태
 	bool bIsAiming = false;		// 조준 상태
+	bool bIsReload = false;	// 장전 상태
+	bool bIsFireButtonPressed = false;	// 사격 인풋 
+	bool bIsFire = false;	// 사격 상태
+	
 #pragma endregion
 	
 #pragma region Camera
@@ -166,6 +131,16 @@ public:
 	float AimingArmLength;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera")
+	float NormalFOV;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera")
+	float AimingFOV;
+
+	float SmoothedCameraZ;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera")
+	float CameraLerpValueZ = 10.0f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera")
 	float CameraInterpSpeed;
 
 #pragma endregion
@@ -177,16 +152,19 @@ public:
 	void PlayerStartSprint(const FInputActionValue& value);
 	void PlayerStopSprint(const FInputActionValue& value);
 	void PlayerDodge(const FInputActionValue& value);
-	void PlayerDodgeFinished(const FInputActionValue& value);
 	void PlayerAim(const FInputActionValue& value);
 	void PlayerAimFinished(const FInputActionValue& value);
 	void PlayerFire(const FInputActionValue& value);
 	void FinishFire(const FInputActionValue& value);
 	void PlayerSkill(const FInputActionValue& value);
+	void FinishSkill(const FInputActionValue& value);
 	void PlayerInteract(const FInputActionValue& value);
 	void PlayerOpenInventory(const FInputActionValue& value);
-	void PlayerReload(const FInputActionValue& value);
-	
+	void PlayerStartReload(const FInputActionValue& value);
+	void PlayerFinishReload(const FInputActionValue& value);
+	void PlayerPotion(const FInputActionValue& value);
+	void ToggleEscMenu(const FInputActionValue& value);
+
 #pragma endregion
 
 #pragma region Skill
@@ -198,7 +176,39 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat")
 	FName HandSocketName;
 	
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Skill")
+	float SkillCoolTime = 5.0f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category="Skill")
+	float RemainSkillCoolTime;
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category="Skill")
+	bool bCanUseSkill = true;
+
+	UPROPERTY(BlueprintAssignable, Category = "Skill")
+	FOnSkillCooldownStarted OnSkillCooldownStarted;
+
+	FTimerHandle SkillCoolTimerHandle;
+	
 	void ThrowGrenade();	// 스킬 실행
+	void ResetSkillCoolTime();
+	void ShowWeaponMesh();
+	float GetSkillCoolTime();
+	
+	bool bIsUsingSkill = false;
+	
+#pragma endregion
+	
+#pragma region Combat
+	
+	FTimerHandle FireTimerHandle;	// 사격 간격 TimeHandle
+	FTimerHandle ReloadTimerHandle;	// 장전 TimeHandle
+	FTimerHandle AimFireStateTimerHandle;	// 조준사격 카메라 분리를 위한 TimeHandle
+	
+	void Fire();
+	void Reload();
+	
+	void UpdateRotationState();	// 조준시 캐릭터 Rotation State 업데이트 
+	void ResetFireState();
 	
 #pragma endregion
 	
@@ -207,6 +217,9 @@ public:
 	bool IsDodge();
 	bool IsInvicible();
 	bool IsAiming();
+	bool IsFiring();
+	bool IsFalling();
+	bool IsUseSkill();
 	
 #pragma endregion
 	
@@ -214,17 +227,28 @@ public:
 	void EndedAnimMontage(UAnimMontage* Montage, bool Interrupted);
 	
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
 	virtual void Tick(float DeltaTime) override;
 	
-	// 주현 : 테스트용 무기
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon")
-	TObjectPtr<AWeaponBase> CurrentWeapon;
+	// 주현 : 테스트용 무기 슬롯
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="TestWeapon")
+	TObjectPtr<UWeaponDataAsset> TestWeapon;
 	
 	// 주현 : SoulGem 장착할 때마다 SoulGem의 스탯들을 모아서 StatusComponent에 재적용.
 	UFUNCTION(BlueprintCallable)
 	void HandleEquipmentChanged();
 		
+protected:
+	void PauseAnim();
+	
+#pragma region Interaction
+public:
+	void SetCurrentInteractable(IInteractableInterface* Interactable);
+	IInteractableInterface* GetCurrentInteractable() const;
+private:
+	IInteractableInterface* CurrentInteractable = nullptr;
+public:
+#pragma endregion
+	
 	// Inventory
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="Inventory")
 	TObjectPtr<UInventoryComponent> InventoryComponent;
@@ -232,4 +256,61 @@ public:
 	//현석 : AI 퍼셉션 감지 대상용 컴포넌트
 	UPROPERTY(VisibleAnywhere, Category = "AI")
 	class UAIPerceptionStimuliSourceComponent* StimuliSource;
+	
+	UFUNCTION(BlueprintPure, Category = "Status")
+	const FCharacterStat& GetTotalStatus() const;
+	void SetTotalStatus(const FCharacterStat& NewStatus);
+
+	UPROPERTY(BlueprintAssignable, Category = "Status")
+	FOnHPChanged OnHPChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Status")
+	FOnStaminaChanged OnStaminaChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Potion")
+	FOnPotionChanged OnPotionChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Potion")
+	FOnPotionCooldownStarted OnPotionCooldownStarted;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Potion")
+	float PotionCoolTime = 5.f;
+
+	bool bPotionOnCooldown = false;
+	FTimerHandle PotionCoolTimerHandle;
+
+	float GetCurrentHP() const { return CurrentHP; }
+	float GetMaxHP() const { return static_cast<float>(TotalStatus.HP); }
+	float GetCurrentStamina() const { return CurrentStamina; }
+	float GetMaxStamina() const { return static_cast<float>(TotalStatus.Stamina); }
+	
+	void SetCurrentHP(const float NewHP) { CurrentHP = NewHP; };
+
+	// 낙사 처리: KillZ 아래로 떨어졌을 때 호출
+	virtual void FellOutOfWorld(const UDamageType& DmgType) override;
+
+	UFUNCTION()
+	void OnDeath();
+
+	UFUNCTION()
+	void Revive();
+	
+	UFUNCTION()
+	void LoadData(FCharacterStat& LoadTotalCharacterStatus, int32 CharacterGold);
+
+	UFUNCTION()
+	int32 GetGold();
+	UFUNCTION()
+	void AddGold(int32 Amount);
+	void ResetGold();
+private:
+	float CurrentHP = 0.f;
+	float CurrentStamina = 0.f;
+
+	// 스태미나 회복 딜레이 타이머
+	FTimerHandle StaminaRegenTimerHandle;
+	bool bCanRegenStamina = true;
+
+	void StartStaminaRegenCooldown();
+	void OnStaminaRegenReady();
 };

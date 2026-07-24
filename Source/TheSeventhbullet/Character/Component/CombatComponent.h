@@ -2,12 +2,20 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Data/StatusTypes.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "System/MainGameMode.h"
 #include "CombatComponent.generated.h"
 
 struct FDamageContext;
+class AMainCharacter;
 class UDamageModifier;
 class AWeaponBase;
-class UWeaponDataAsset;
+class ADamageNumberActor;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCurrentDamageBroadcast, float, Damage, bool, bIsCrit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAmmoChanged, int32, CurrentAmmo, int32, MaxAmmo);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHitConfirm, bool, bIsHeadShot);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class THESEVENTHBULLET_API UCombatComponent : public UActorComponent
@@ -17,41 +25,74 @@ class THESEVENTHBULLET_API UCombatComponent : public UActorComponent
 public:
 	UCombatComponent();
 	
-	void InitializeWeaponData(AWeaponBase* Weapon);
+	void InitializeWeaponData(UWeaponDataAsset* Weapon);
+	UFUNCTION(BlueprintCallable)
+	void HandleWeaponEquipmentChanged(UWeaponDataAsset* NewWeaponData);
 	
 	void StartFire();
 	void StopFire();
 	
 	void HitScanFire();
+	void PerformTrace(TArray<FHitResult>& OutHits);
+	FVector TraceRandShot(const FVector& TraceStart, const FVector& MaxTargetLocation);
+	void SpreadBullet();
+	void ResetSpreadRadius();
+
+	int GetCurrentAmmo() const;
+	int GetMaxAmmo() const;
 	void Reload();
 	void ConsumeAmmo();
 	
-	void ApplyDamageByHit(AWeaponBase* Weapon, const FHitResult& Hit);
+	void ApplyDamageByHit(const FHitResult& Hit);
 	void ExecutePipeline(FDamageContext& Context);
 	
-	void SpawnFireParticles(const FHitResult& Hit);
+	UFUNCTION(BlueprintCallable)
+	void SpawnFireParticles();
+	UFUNCTION(BlueprintCallable)
+	void SpawnHitParticles(const FHitResult& Hit);
+	UFUNCTION(BlueprintCallable)
+	void SpawnFireSound();
+	UFUNCTION(BlueprintCallable)
+	void SpawnReloadSound();
+	
+public:
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FOnCurrentDamageBroadcast OnCurrentDamageBroadcast;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FOnAmmoChanged OnAmmoChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FOnHitConfirm OnHitConfirm;
 	
 protected:
 	virtual void BeginPlay() override;
 	
 private:
-	
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<AMainCharacter> WeaponOwner = nullptr;
+	UPROPERTY(EditAnywhere,BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<const UWeaponDataAsset> WeaponDataView = nullptr;
+	UPROPERTY(EditAnywhere,BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	FWeaponStat CurrentWeaponStatus;
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	TArray<TObjectPtr<UDamageModifier>> DamageModifiersPipeline; // 데미지 계산 파이프라인
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
 	FTimerHandle FireTimerHandle;
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
 	FTimerHandle ReloadTimerHandle;
-	bool bIsFiring = false;
-	bool bIsReloading = false;
 	
+	int32 CurrentAmmo = 0;
 	float LastFireTime = -1.f;
 	
-	UPROPERTY()
-	TObjectPtr<AWeaponBase> CurrentWeapon = nullptr;
-	UPROPERTY()
-	TObjectPtr<UWeaponDataAsset> WeaponData = nullptr;
-	UPROPERTY()
-	TArray<TObjectPtr<UDamageModifier>> DamageModifiersPipeline;
+	bool bIsFiring = false; // 발사 중인지 여부
+	bool bIsReloading = false; // 재장전 중인지 여부
 	
-	float FireInterval = 0.5f; // 발사 간격
-	int32 CurrentAmmo = 0; // 현재 탄창
-	int32 MaxAmmo = 0; // 탄창 최대치
-	float ReloadTime = 1.0f; // 재장전 시간
+	bool bDrawFireDebug = false; // 발사 디버그 표시 여부
+	float FireDebugDuration = 0.f; // 발사 디버그 지속 시간
+	bool bDrawDebugInfinite = false; // 발사 디버그 드로우를 영구지속할지 여부
+	AMainGameMode* GM = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|UI")
+	TSubclassOf<ADamageNumberActor> DamageNumberActorClass;
 };

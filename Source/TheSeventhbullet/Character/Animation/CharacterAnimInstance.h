@@ -6,9 +6,15 @@
 #include "Animation/AnimInstance.h"
 #include "CharacterAnimInstance.generated.h"
 
-/**
- * 
- */
+UENUM(Blueprintable)
+enum class EAnimWeaponType : uint8
+{
+	None				UMETA(DisplayName = "UnArmed"),
+	HandGun				UMETA(DisplayName = "Pistol"),
+	AssaultRifle		UMETA(DisplayName = "ShotGun"),
+	ShotGun				UMETA(DisplayName = "Rifle")	
+};
+
 UCLASS()
 class THESEVENTHBULLET_API UCharacterAnimInstance : public UAnimInstance
 {
@@ -19,10 +25,16 @@ public:
 	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
 	
 protected:
+	UPROPERTY(BlueprintReadOnly, Category = "Weapon")
+	EAnimWeaponType CurrentWeaponType;
+	
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")
 	float MovementSpeed;
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")
 	float Direction;
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Aiming")
+	float AimPitch;
 	
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")
 	bool bIsFalling;
@@ -30,9 +42,19 @@ protected:
 	bool bIsDodging;
 	UPROPERTY(BlueprintReadOnly, Category = "Action")
 	bool bIsAiming;
+	UPROPERTY(BlueprintReadOnly, Category = "Action")
+	bool bIsFiring;
 	
 	UFUNCTION()
 	void AnimNotify_Throw();
+	UFUNCTION()
+	void AnimNotify_EndSkill();
+	UFUNCTION()
+	void AnimNotify_RefillAmmo();
+	UFUNCTION()
+	void AnimNotify_Start_Invicible();
+	UFUNCTION()
+	void AnimNotify_End_Invicible();
 private:
 	UPROPERTY()
 	TObjectPtr<class ACharacter> OwnerCharacter;

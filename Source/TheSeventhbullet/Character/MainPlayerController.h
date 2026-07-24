@@ -13,12 +13,14 @@ UCLASS()
 class THESEVENTHBULLET_API AMainPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
+
 public:
 	AMainPlayerController();
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputMappingContext> InputMappingContext;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputMappingContext> UIMappingContext;  // IMC_UI (ESC, Inventory - 항상 활성)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputAction> MoveAction;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
@@ -39,4 +41,8 @@ public:
 	TObjectPtr<UInputAction> SkillAction;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputAction> ReloadAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputAction> PotionAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputAction> EscMenuAction;
 };

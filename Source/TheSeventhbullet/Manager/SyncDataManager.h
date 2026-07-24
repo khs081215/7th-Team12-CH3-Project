@@ -40,16 +40,27 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	
 	UFUNCTION(BlueprintCallable, Category = "Data|Sync")
-	FStageRowData GetStageData(int32 StageIndex) const;
-	
+	FRequestRowData GetRequestData(int32 RequestID) const;
+
 	UFUNCTION(BlueprintPure, Category = "Data|Sync")
-	int32 GetTotalWaveCount() const;
-	
+	int32 GetTotalRequestCount() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Data|Sync")
+	TArray<int32> GetAllRequestIDs() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Data|Sync")
 	FMonsterRowData GetMonsterData(const EMonsterType Tag) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Data|Sync")
-	FWaveRowData GetWaveData(int32 StageIndex, int32 WaveIndex);
+	FWaveRowData GetWaveData(int32 RequestID, int32 WaveIndex);
+	
+	// 주현 : GetDropMaterialData
+	UFUNCTION(BlueprintCallable, Category = "Data|Sync")
+	FMonsterDropRowData GetDropMaterialData(const EMonsterType MonsterType) const;
+	
+	// 주현 : GetRecycleResultData
+	UFUNCTION(BlueprintCallable, Category = "Data|Sync")
+	FMaterialRecycleRowData GetRecycleResultData(const int32 Grade) const;
 	
 public:
 	template<typename RowType, typename KeyType>
@@ -57,11 +68,18 @@ public:
 	
 private:
 	UPROPERTY()
-	TMap<int32, FStageRowData> StageCache;
+	TMap<int32, FRequestRowData> RequestCache;
 	
 	UPROPERTY()
 	TMap<EMonsterType, FMonsterRowData> MonsterCache;
 	
+	// 주현 : 아이템 드랍 Row를 캐싱
+	UPROPERTY()
+	TMap<EMonsterType, FMonsterDropRowData> ItemDropCache;
+	
+	// 주현 : Material 재활용 결과로 나올 Pool을 저장한 Row를 캐싱
+	UPROPERTY()
+	TMap<int32, FMaterialRecycleRowData> MaterialRecycleCache;
 };
 
 #pragma region LoadHelper

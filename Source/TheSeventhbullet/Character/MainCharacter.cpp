@@ -3,39 +3,46 @@
 #include "EnhancedInputSubsystems.h"
 #include "MainPlayerController.h"
 #include "PlayerSkill.h"
+#include "TheSeventhbullet/Interaction/InteractableInterface.h"
 #include "Animation/CharacterAnimInstance.h"
 #include "Camera/CameraComponent.h"
 #include "Component/CombatComponent.h" // 주현 : CombatComponent
 #include "Component/EquipmentComponent.h" // 주현 : EquipmentComponent
-#include "Component/GemStatusComponent.h" // 주현 : StatusComponent
+#include "Component/StatusComponent.h" // StatusComponent
+#include "Components/CapsuleComponent.h"
+#include "DataAsset/WeaponDataAsset.h"
 #include "Inventory/InventoryComponent.h" // Inventory
 #include "UI/UITags.h"
 #include "Manager/UIManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Misc/MapErrors.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
-#include "TheSeventhbullet/Weapon/WeaponBase.h"
 #include "Perception/AISense_Hearing.h"
+#include "System/MainGameMode.h"
 
 
 AMainCharacter::AMainCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	
-	MaxHP = 100;
-	CurrentHP = MaxHP;
-	MaxStamina = 100;	
-	CurrentStamina = MaxStamina;
-	DodgeCost = 20;
-	DodgeDistance = 3000.0f;
-	MaxSpeed = 600.0f;
-	SprintMultifier = 1.5f;
-	AimSpeed = 400.0f;
-	NormalArmLength = 300.0f; 
-	AimingArmLength = 0.0f;
-	NormalSpringArm = FVector(0.0f, 25.0f, 0.0f);
-	AimingSpringArm = FVector(0.0f, 25.0f, 35.0f);
+	TotalStatus.Speed = 600.0f;
+	TotalStatus.HP = 100;
+	TotalStatus.Stamina = 100;
+	TotalStatus.Attack = 100;
+	TotalStatus.Defence = 10;
+	TotalStatus.CriticalChance = 0.15f;
+	TotalStatus.CriticalDamage = 1.5f;
+	
+	SprintMultiplier = 1.5f;
+	AimMultiplier = 0.8f;
+	NormalArmLength = 400.0f; 
+	AimingArmLength = 200.0f;
+	NormalSpringArm = FVector(0.0f, 50.0f, 60.0f);
+	AimingSpringArm = FVector(0.0f, 90.0f, 80.0f);
+	NormalFOV = 90.0f;
+	AimingFOV = 70.0f;
 	CameraInterpSpeed = 15.0f;
 	MuzzleOffset = FVector(300.0f, 0.0f, 0.0f);
 	HandSocketName = FName("Muzzle_01");
@@ -48,15 +55,23 @@ AMainCharacter::AMainCharacter()
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm);
 	Camera->bUsePawnControlRotation = false;
-	
-	GetCharacterMovement()->MaxWalkSpeed = MaxSpeed;
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, 1000.0f, 0.0f);
+	GetCharacterMovement()->MaxWalkSpeed = TotalStatus.Speed;
 	
 	bIsDodge = false;
+	GetCharacterMovement()->bOrientRotationToMovement = true;
+	bUseControllerRotationYaw = false;
 	
+	// 주현 : WeaponMeshComponent 초기화
+	WeaponMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMeshComp"));
+	WeaponMeshComponent->SetupAttachment(GetMesh(), TEXT("weapon_r"));
+	WeaponMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision); // 무기가 캐릭터나 카메라랑 충돌나서 끔
 	// 주현 : CombatComponent 초기화
 	CombatComponent = CreateDefaultSubobject<UCombatComponent>(TEXT("CombatComp"));
+	// 주현 : EquipmentComponent 초기화
 	EquipmentComponent = CreateDefaultSubobject<UEquipmentComponent>(TEXT("Equipment"));
-	StatusComponent = CreateDefaultSubobject<UGemStatusComponent>(TEXT("Status"));
+	// 주현 : StatusComponent 초기화
+	StatusComponent = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
 	
   InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComp"));
 
@@ -69,21 +84,42 @@ void AMainCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	UE_LOG(LogTemp, Warning, TEXT("[MainCharacter] BeginPlay - World: %s, Name: %s"), GetWorld() ? *GetWorld()->GetName() : TEXT("NULL"), *GetName());
-
+	
+	SmoothedCameraZ = GetActorLocation().Z;
+	
 	if (AMainPlayerController* PC = Cast<AMainPlayerController>(GetController()))
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
 		{
-			Subsystem->AddMappingContext(PC->InputMappingContext, 0);
+			Subsystem->AddMappingContext(PC->InputMappingContext, 0);  // Gameplay
+			if (PC->UIMappingContext)
+			{
+				Subsystem->AddMappingContext(PC->UIMappingContext, 1);  // UI (항상 활성)
+			}
 		}
 	}
+	
+	// 주현 : 테스트용 무기 장착
+	//EquipmentComponent->EquipWeaponData(TestWeapon);
 	
 	// 주현 : EquipmentComponent의 OnEquipmentChanged.Broadcast()를 호출할 때, HandleEquipmentChanged()를 실행시키기 위한 코드
 	if (EquipmentComponent && StatusComponent)
 	{
-		EquipmentComponent->OnEquipmentChanged.AddDynamic(this, &AMainCharacter::HandleEquipmentChanged);
+		EquipmentComponent->OnGemEquipmentChanged.AddDynamic(this, &AMainCharacter::HandleEquipmentChanged);
 		HandleEquipmentChanged();
 	}
+
+	// 1일차 물약 1개 지급
+	if (InventoryComponent)
+	{
+		FPrimaryAssetId PotionID(FPrimaryAssetType("Item"), FName("DA_HealthPotion"));
+		InventoryComponent->AddItem(PotionID, 1);
+	}
+
+	// CurrentHP / CurrentStamina 초기화
+	CurrentHP = static_cast<float>(TotalStatus.HP);
+	CurrentStamina = static_cast<float>(TotalStatus.Stamina);
+
 }
 
 void AMainCharacter::ThrowGrenade()
@@ -154,6 +190,120 @@ void AMainCharacter::ThrowGrenade()
 	}
 }
 
+void AMainCharacter::ResetSkillCoolTime()
+{
+	bCanUseSkill = true;
+}
+
+void AMainCharacter::ShowWeaponMesh()
+{
+	if (WeaponMeshComponent && EquipmentComponent->CurrentWeapon)
+	{
+		WeaponMeshComponent->SetVisibility(true, true);	
+	}
+}
+
+float AMainCharacter::GetSkillCoolTime()
+{
+	if (bCanUseSkill || !GetWorld()) return 0.0f;
+	
+	RemainSkillCoolTime = GetWorld()->GetTimerManager().GetTimerRemaining(SkillCoolTimerHandle);
+	return RemainSkillCoolTime;
+}
+
+void AMainCharacter::Fire()
+{
+	if (CombatComponent == nullptr || EquipmentComponent->CurrentWeapon == nullptr)	return;
+	
+	if (CurrentState != EAnimState::None|| bIsReload || IsFalling())
+	{
+		return; 
+	}
+	
+	bIsFire = true;
+	UpdateRotationState();
+	
+	float ResetInterval = EquipmentComponent->CurrentWeapon->FireInterval + 0.3;
+	
+	GetWorld()->GetTimerManager().SetTimer(
+		AimFireStateTimerHandle, 
+		this, 
+		&AMainCharacter::ResetFireState, 
+		ResetInterval, 
+		false 
+	);
+	
+	int CurrentAmmo = CombatComponent->GetCurrentAmmo();
+	if (CurrentAmmo <= 0)
+	{
+		GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+		Reload();
+		return;
+	}
+	
+	UCharacterAnimInstance* AnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance());
+	// 남태 : TestWeapon 나중 데이터에셋 변수 바뀌면 수정 해야함
+	TSoftObjectPtr<UAnimMontage> SelectedSoftMontage;
+	SelectedSoftMontage = EquipmentComponent->CurrentWeapon->AttackMontage;
+	
+	UAnimMontage* MontageToPlay = SelectedSoftMontage.Get();
+	
+	if(!MontageToPlay)
+	{
+		MontageToPlay = EquipmentComponent->CurrentWeapon->AttackMontage.LoadSynchronous();
+	}
+	
+	if (AnimInstance)
+	{
+		if (MontageToPlay)
+		{
+			float Duration = AnimInstance->Montage_Play(MontageToPlay);
+		
+			FOnMontageEnded EndDelegate;
+			EndDelegate.BindUObject(this, &AMainCharacter::EndedAnimMontage);
+			AnimInstance->Montage_SetEndDelegate(EndDelegate, MontageToPlay);
+		}
+	}
+	// FRotator CharacterRotation = GetBaseAimRotation();
+	// CharacterRotation.Pitch = 0.0f;
+	// CharacterRotation.Roll = 0.0f;
+	// SetActorRotation(CharacterRotation);
+	
+	CombatComponent->StartFire(); // 발사 시작
+	
+	//현석 : 청각 이벤트 발생
+	UAISense_Hearing::ReportNoiseEvent(
+		   GetWorld(),
+		   GetActorLocation(),  // 클릭한 위치
+		   1.0f,               // Loudness
+		  this,          // Instigator
+		   2000.0f             // MaxRange
+	   );
+}
+
+void AMainCharacter::Reload()
+{
+	if (CombatComponent == nullptr || EquipmentComponent->CurrentWeapon == nullptr)	return;
+		
+	bIsReload = true;
+	CombatComponent->SpawnReloadSound();
+	UCharacterAnimInstance* AnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance());
+		
+	UAnimMontage* MontageToPlay = EquipmentComponent->CurrentWeapon->ReloadMontage.Get();
+	if(!MontageToPlay)	MontageToPlay = EquipmentComponent->CurrentWeapon->ReloadMontage.LoadSynchronous();
+	
+	if (AnimInstance && MontageToPlay)
+	{
+		float Duration = AnimInstance->Montage_Play(MontageToPlay);
+	
+		FOnMontageEnded EndDelegate;
+		EndDelegate.BindUObject(this, &AMainCharacter::EndedAnimMontage);
+		AnimInstance->Montage_SetEndDelegate(EndDelegate, MontageToPlay);
+	}
+	
+	//CombatComponent->Reload();	
+}
+
 bool AMainCharacter::IsDodge()
 {
 	return bIsDodge;
@@ -167,6 +317,21 @@ bool AMainCharacter::IsInvicible()
 bool AMainCharacter::IsAiming()
 {
 	return bIsAiming;
+}
+
+bool AMainCharacter::IsFiring()
+{
+	return bIsFire;
+}
+
+bool AMainCharacter::IsFalling()
+{
+	return GetCharacterMovement()->IsFalling();
+}
+
+bool AMainCharacter::IsUseSkill()
+{
+	return bIsUsingSkill;
 }
 
 void AMainCharacter::PlayAnimMotageByState(EAnimState AnimState)
@@ -190,7 +355,39 @@ void AMainCharacter::PlayAnimMotageByState(EAnimState AnimState)
 
 void AMainCharacter::EndedAnimMontage(UAnimMontage* Montage, bool Interrupted)
 {
+	if (MontagesMap.Contains(EAnimState::Dodge) && Montage == MontagesMap[EAnimState::Dodge])
+	{
+		bIsDodge = false;
+		bIsInvicible = false;
+	}
+
 	CurrentState = EAnimState::None;
+	
+	UpdateRotationState();
+	
+	if (!EquipmentComponent || !EquipmentComponent->CurrentWeapon) return;
+	
+	UAnimMontage* ReloadMontage = EquipmentComponent->CurrentWeapon->ReloadMontage.Get();
+	if (Montage == ReloadMontage)
+	{
+		bIsReload = false;
+		
+		if (bIsFireButtonPressed)
+		{			
+			float FiraRate = EquipmentComponent->CurrentWeapon->FireInterval;
+			if (FiraRate > 0.0f)
+			{
+				Fire();
+				GetWorldTimerManager().SetTimer(
+					FireTimerHandle,
+					this,
+					&AMainCharacter::Fire,
+					FiraRate,
+					true
+				);
+			}
+		}
+	}
 }
 
 void AMainCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -240,18 +437,10 @@ void AMainCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 				&AMainCharacter::PlayerDodge
 			);
 			
-			// Finish Dodge 바인딩
-			InputComponents->BindAction(
-				PC->DodgeAction,
-				ETriggerEvent::Completed,
-				this,
-				&AMainCharacter::PlayerDodgeFinished
-			);
-			
 			// Aim 바인딩
 			InputComponents->BindAction(
 				PC->AimAction,
-				ETriggerEvent::Triggered,
+				ETriggerEvent::Started,
 				this,
 				&AMainCharacter::PlayerAim
 			);
@@ -280,7 +469,7 @@ void AMainCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 				&AMainCharacter::FinishFire
 			);
 			
-			// SKill 바인딩
+			// Skill 바인딩
 			InputComponents->BindAction(
 				PC->SkillAction,
 				ETriggerEvent::Started,
@@ -288,10 +477,18 @@ void AMainCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 				&AMainCharacter::PlayerSkill
 			);
 			
+			// FinishSkill 바인딩
+			InputComponents->BindAction(
+				PC->SkillAction,
+				ETriggerEvent::Completed,
+				this,
+				&AMainCharacter::FinishSkill
+			);
+			
 			// Interact 바인딩
 			InputComponents->BindAction(
 				PC->InteractAction,
-				ETriggerEvent::Triggered,
+				ETriggerEvent::Started,
 				this,
 				&AMainCharacter::PlayerInteract
 			);
@@ -304,14 +501,38 @@ void AMainCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 				&AMainCharacter::PlayerOpenInventory
 			);
 			
-			// Reload 바인딩
+			// StartReload 바인딩
 			InputComponents->BindAction(
 				PC->ReloadAction,
 				ETriggerEvent::Started,
 				this,
-				&AMainCharacter::PlayerReload
+				&AMainCharacter::PlayerStartReload
 			);
-		
+
+			// FinishReload 바인딩
+			InputComponents->BindAction(
+				PC->ReloadAction,
+				ETriggerEvent::Started,
+				this,
+				&AMainCharacter::PlayerFinishReload
+			);
+			
+			// PlayerPotion 바인딩
+			InputComponents->BindAction(
+				PC->PotionAction,
+				ETriggerEvent::Started,
+				this,
+				&AMainCharacter::PlayerPotion
+			);
+			
+			// EscMenu 바인딩
+			InputComponents->BindAction(
+				PC->EscMenuAction,
+				ETriggerEvent::Started,
+				this,
+				&AMainCharacter::ToggleEscMenu
+			);
+
 		}
 	}
 }
@@ -319,7 +540,50 @@ void AMainCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 float AMainCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
 	class AController* EventInstigator, AActor* DamageCauser)
 {
-	return Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+
+	if (bIsInvicible) return 0.f;
+
+	// 방어력에 따른 데미지 감소율을 적용
+	float DamageDecreaseValue = 1 - (FMath::Log2(static_cast<float>(TotalStatus.Defence)/40.f + 1.f)*0.3f);
+	float FinalDamage = FMath::Max(ActualDamage*DamageDecreaseValue, 1.f);
+	UE_LOG(LogTemp, Warning, TEXT("TakeDamage: %f / DamageDecrease : %f"), FinalDamage, DamageDecreaseValue);
+
+	CurrentHP = FMath::Clamp(CurrentHP - FinalDamage, 0.f, static_cast<float>(TotalStatus.HP));
+	OnHPChanged.Broadcast(CurrentHP, static_cast<float>(TotalStatus.HP));
+	UE_LOG(LogTemp, Error,TEXT("Current HP : %f"), CurrentHP);
+	if (CurrentHP <= 0.f)
+	{
+		OnDeath();
+	}
+
+	return FinalDamage;
+}
+
+void AMainCharacter::UsePotion()
+{
+	if (!InventoryComponent) return;
+
+	FPrimaryAssetId PotionID(FPrimaryAssetType("Item"), FName("DA_HealthPotion"));
+	if (!InventoryComponent->RemoveItemByID(PotionID, 1)) return;
+
+	float HealAmount = TotalStatus.HP * 0.25f;
+	CurrentHP = FMath::Clamp(CurrentHP + HealAmount, 0.f, static_cast<float>(TotalStatus.HP));
+	OnHPChanged.Broadcast(CurrentHP, static_cast<float>(TotalStatus.HP));
+
+	// 남은 수량 알림
+	int32 Remaining = InventoryComponent->GetCountByID(PotionID);
+	OnPotionChanged.Broadcast(Remaining);
+
+	// 쿨타임 시작
+	bPotionOnCooldown = true;
+	OnPotionCooldownStarted.Broadcast(PotionCoolTime);
+	GetWorldTimerManager().SetTimer(
+		PotionCoolTimerHandle,
+		[this]() { bPotionOnCooldown = false; },
+		PotionCoolTime,
+		false
+	);
 }
 
 void AMainCharacter::Tick(float DeltaTime)
@@ -328,12 +592,31 @@ void AMainCharacter::Tick(float DeltaTime)
 	
 	// bIsAming 으로 조준 상태 구분
 	float TargetLength = bIsAiming ? AimingArmLength : NormalArmLength;
+	float TargetFOV = bIsAiming ? AimingFOV : NormalFOV;
 	FVector TargetOffset = bIsAiming ? AimingSpringArm : NormalSpringArm;
+	
+	FVector CurrentLocation = GetActorLocation();
+	
+	SmoothedCameraZ = FMath::FInterpTo(SmoothedCameraZ, CurrentLocation.Z, DeltaTime, CameraLerpValueZ);
+	float ZDifference = SmoothedCameraZ - CurrentLocation.Z;
+	
+	if (SpringArm)
+	{
+		SpringArm->TargetOffset = FVector(0.0f, 0.0f, ZDifference);
+	}
 	
 	// Length 보간
 	float NewArmLength = FMath::FInterpTo(
 		SpringArm->TargetArmLength,
 		TargetLength,
+		DeltaTime,
+		CameraInterpSpeed
+	);
+	
+	// 카메라 FOV 보간
+	float NewCameraFOV = FMath::FInterpTo(
+		Camera->FieldOfView,
+		TargetFOV,
 		DeltaTime,
 		CameraInterpSpeed
 	);
@@ -346,8 +629,18 @@ void AMainCharacter::Tick(float DeltaTime)
 		CameraInterpSpeed
 	);
 	
+	
 	SpringArm->TargetArmLength = NewArmLength;
+	Camera->FieldOfView = NewCameraFOV;
 	SpringArm->SocketOffset = NewSocketOffSet;
+
+	// 스태미나 자연 회복
+	if (bCanRegenStamina && CurrentStamina < GetMaxStamina())
+	{
+		CurrentStamina = FMath::Min(CurrentStamina + StaminaRegenRate * DeltaTime, GetMaxStamina());
+		OnStaminaChanged.Broadcast(CurrentStamina, GetMaxStamina());
+	}
+
 }
 
 void AMainCharacter::PlayerMove(const FInputActionValue& value)
@@ -391,9 +684,11 @@ void AMainCharacter::PlayerLook(const FInputActionValue& value)
 
 void AMainCharacter::PlayerStartSprint(const FInputActionValue& value)
 {
+	if (bIsAiming || bIsFire) return;
+	
 	if (GetCharacterMovement())
 	{
-		GetCharacterMovement()->MaxWalkSpeed = MaxSpeed * SprintMultifier;
+		GetCharacterMovement()->MaxWalkSpeed = TotalStatus.Speed * SprintMultiplier;
 	}
 }
 
@@ -401,137 +696,214 @@ void AMainCharacter::PlayerStopSprint(const FInputActionValue& value)
 {
 	if (GetCharacterMovement())
 	{
-		GetCharacterMovement()->MaxWalkSpeed = MaxSpeed;
+		GetCharacterMovement()->MaxWalkSpeed = TotalStatus.Speed;
 	}
 }
 
 void AMainCharacter::PlayerDodge(const FInputActionValue& value)
 {
-	if (bIsDodge || CurrentStamina < DodgeCost)
+	
+	if (!EquipmentComponent->CurrentWeapon) return;
+	
+	if (bIsDodge || GetCharacterMovement()->IsFalling())
 	{
 		return;
 	}
 	
-	//CurrentStamina -= DodgeCost;	// 소모 스테미나
-	bIsDodge = true;
+	// 스태미나 부족 시 Dodge 불가
+	if (CurrentStamina < DodgeStaminaCost)
+	{
+		return;
+	}
+
+	bIsDodge = true; 
+	CurrentState = EAnimState::Dodge;
 	
-	// 캐릭터 방향 가져오기
-	FVector DodgeDirection = GetActorForwardVector();
+	// 스태미나 소모
+	CurrentStamina = FMath::Max(CurrentStamina - DodgeStaminaCost, 0.f);
+	OnStaminaChanged.Broadcast(CurrentStamina, GetMaxStamina());
+	StartStaminaRegenCooldown();
 	
 	// 입력 방향 벡터 가져오기
 	FVector InputDirection = GetLastMovementInputVector();
 	
-	if (!InputDirection.IsNearlyZero())
+	if (bIsAiming && !InputDirection.IsNearlyZero())
 	{
-		DodgeDirection = InputDirection.GetSafeNormal();
-	}
-	
-	if (CurrentState != EAnimState::None) return;
-	
-	UCharacterAnimInstance* CharacterAnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance()); 
+		bUseControllerRotationYaw = false;	// 회피 중 카메라와 캐릭터 시점 고정 해제
+		GetCharacterMovement()->bOrientRotationToMovement = false;
 		
-	if (CharacterAnimInstance && !CharacterAnimInstance->IsAnyMontagePlaying())
+		FRotator Direction = InputDirection.Rotation();
+		Direction.Pitch = 0.0f;
+		Direction.Roll = 0.0f;
+		
+		SetActorRotation(Direction);
+	}
+		
+	UCharacterAnimInstance* AnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance());
+	if (AnimInstance)
 	{
-		PlayAnimMotageByState(EAnimState::DodgeFwd);
+		AnimInstance->Montage_Stop(0.15f);
 	}
 	
-	LaunchCharacter(DodgeDirection*DodgeDistance, true, false);
+	// AnimMontage 재생
+	PlayAnimMotageByState(EAnimState::Dodge);
 }
 
-void AMainCharacter::PlayerDodgeFinished(const FInputActionValue& value)
+void AMainCharacter::UpdateRotationState()
 {
-	bIsDodge = false;
+	if (bIsAiming || bIsFire || bIsUsingSkill)
+	{
+		GetCharacterMovement()->bOrientRotationToMovement = false;
+		bUseControllerRotationYaw = true;
+	}
+	else
+	{
+		GetCharacterMovement()->bOrientRotationToMovement = true;
+		bUseControllerRotationYaw = false;
+	}
+}
+
+void AMainCharacter::ResetFireState()
+{
+	bIsFire = false;
+	
+	UpdateRotationState();
 }
 
 void AMainCharacter::PlayerAim(const FInputActionValue& value)
 {
-	PrimaryActorTick.bCanEverTick = true;	// 보간을 위한 Tick On
-	GetCharacterMovement()->bOrientRotationToMovement = false;
-	bUseControllerRotationYaw = true;		// 카메라와 캐릭터 방향 분리 
+	if (!EquipmentComponent->CurrentWeapon) return;
+	
+	if (bIsDodge) return;
+	
+	bIsAiming = true;
+	
+	UpdateRotationState();
 	
 	if (GetCharacterMovement())
 	{
-		GetCharacterMovement()->MaxWalkSpeed = AimSpeed;	// 줌 하는 동안 이동속도 감소
+		GetCharacterMovement()->MaxWalkSpeed = TotalStatus.Speed * AimMultiplier;	// 줌 하는 동안 이동속도 감소
 	}
-	
-	bIsAiming = true;
-	 
 }
 
 void AMainCharacter::PlayerAimFinished(const FInputActionValue& value)
 {
-	PrimaryActorTick.bCanEverTick = false;	// Tick Off
-	GetCharacterMovement()->bOrientRotationToMovement = true;
-	bUseControllerRotationYaw = false;		// 카메라와 캐릭터 방향 분리해제 
+	bIsAiming = false;
+	
+	UpdateRotationState();
 	
 	if (GetCharacterMovement())
 	{
-		GetCharacterMovement()->MaxWalkSpeed = MaxSpeed;	
+		GetCharacterMovement()->MaxWalkSpeed = TotalStatus.Speed;	
 	}
-	
-	bIsAiming = false;
 }
 
 void AMainCharacter::PlayerFire(const FInputActionValue& value)
-{
-	if (!CurrentWeapon)
+{	
+	if (CombatComponent == nullptr || EquipmentComponent->CurrentWeapon == nullptr)	return;
+	
+	if (CurrentState != EAnimState::None|| bIsReload || IsFalling())
 	{
 		return;
 	}
 	
-	if (CurrentState != EAnimState::None) return;
+	bIsFireButtonPressed = true;
 	
-	UCharacterAnimInstance* CharacterAnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance()); 
-		
-	if (CharacterAnimInstance && !CharacterAnimInstance->IsAnyMontagePlaying())
-	{
-		PlayAnimMotageByState(EAnimState::Fire_Rifle);
-	}
+	// FireRate 0일 때 방어코드
+	float FireRate = EquipmentComponent->CurrentWeapon->FireInterval;
+	if (FireRate <= 0.0f) return;
 	
-	GetCharacterMovement()->bOrientRotationToMovement = false;
-	bUseControllerRotationYaw = true;		// 카메라와 캐릭터 방향 분리 
+	Fire();
 	
-	CombatComponent->StartFire();
-	
-	//현석 : 청각 이벤트 발생
-	UAISense_Hearing::ReportNoiseEvent(
-		   GetWorld(),
-		   GetActorLocation(),  // 클릭한 위치
-		   1.0f,               // Loudness
-		  this,          // Instigator
-		   2000.0f             // MaxRange
-	   );
-	UE_LOG(LogTemp,Warning,TEXT("Hearing Event Accured!"));
+	UCharacterAnimInstance* AnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance());
+	GetWorldTimerManager().SetTimer(
+		FireTimerHandle, 
+		this, 
+		&AMainCharacter::Fire,
+		FireRate, 
+		true
+	);
 }
 
 void AMainCharacter::FinishFire(const FInputActionValue& value)
 {
-	if (!CurrentWeapon)
-	{
-		return;
-	}
+	bIsFireButtonPressed = false;
+		
+	if (CombatComponent == nullptr || EquipmentComponent->CurrentWeapon == nullptr)	return;
 	
-	GetCharacterMovement()->bOrientRotationToMovement = true;
-	bUseControllerRotationYaw = false;		// 카메라와 캐릭터 방향 분리해제 
-	
+	GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
 	CombatComponent->StopFire();
+	bIsFire = false;
 }
 
 void AMainCharacter::PlayerSkill(const FInputActionValue& value)
 {
+	if (!EquipmentComponent->CurrentWeapon) return;
+	
 	if (CurrentState != EAnimState::None) return;
 	
-	UCharacterAnimInstance* CharacterAnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance()); 
-		
-	if (CharacterAnimInstance && !CharacterAnimInstance->IsAnyMontagePlaying())
+	if (bCanUseSkill)
 	{
+		bCanUseSkill = false;
+		
+		// Skill 사용시 카메라 모드 변경
+		bIsUsingSkill = true;
+		
+		CurrentState = EAnimState::Skill; 
+		GetWorldTimerManager().ClearTimer(FireTimerHandle);
+		
+		UpdateRotationState();
+		
+		WeaponMeshComponent->SetVisibility(false, true);
+		
+		UCharacterAnimInstance* AnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance());
+		if (AnimInstance)
+		{
+			AnimInstance->Montage_Stop(0.15f);
+		}
+		
 		PlayAnimMotageByState(EAnimState::Skill);
+		
+		OnSkillCooldownStarted.Broadcast(SkillCoolTime);
+
+		GetWorld()->GetTimerManager().SetTimer(
+			SkillCoolTimerHandle,
+			this,
+			&AMainCharacter::ResetSkillCoolTime,
+			SkillCoolTime,
+			false
+		);
 	}
-	
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Remain Time : %.1f"), GetSkillCoolTime());
+		
+	}
+}
+
+void AMainCharacter::FinishSkill(const FInputActionValue& value)
+{
+	bIsUsingSkill = false;
+	UpdateRotationState();
 }
 
 void AMainCharacter::PlayerInteract(const FInputActionValue& value)
 {
+	if (CurrentInteractable)
+	{
+		UE_LOG(LogTemp,Log,TEXT("PlayerInteract"));
+		CurrentInteractable->Interact(this);
+	}
+}
+
+void AMainCharacter::SetCurrentInteractable(IInteractableInterface* Interactable)
+{
+	CurrentInteractable = Interactable;
+}
+
+IInteractableInterface* AMainCharacter::GetCurrentInteractable() const
+{
+	return CurrentInteractable;
 }
 
 void AMainCharacter::PlayerOpenInventory(const FInputActionValue& value)
@@ -540,18 +912,46 @@ void AMainCharacter::PlayerOpenInventory(const FInputActionValue& value)
 	{
 		UIMgr->Toggle(UITags::Inventory);
 	}
+}
+
+void AMainCharacter::PlayerStartReload(const FInputActionValue& value)
+{
+	if (bIsReload || bIsDodge) return;
+	
+	if (CombatComponent == nullptr || EquipmentComponent->CurrentWeapon == nullptr) return;
+	
+	int CurrentAmmo = CombatComponent->GetCurrentAmmo();
+	int MaxAmmo = EquipmentComponent->CurrentWeapon->MaxAmmo;
+	
+	if (CurrentAmmo >= MaxAmmo) return;
+	
+	GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+	
+	Reload();
+
 	
 }
 
-void AMainCharacter::PlayerReload(const FInputActionValue& value)
+void AMainCharacter::PlayerFinishReload(const FInputActionValue& value)
 {
-	if (CurrentState != EAnimState::None) return;
-	
-	UCharacterAnimInstance* CharacterAnimInstance = Cast<UCharacterAnimInstance>(GetMesh()->GetAnimInstance()); 
-		
-	if (CharacterAnimInstance && !CharacterAnimInstance->IsAnyMontagePlaying())
+	//bIsReload = false;
+}
+
+void AMainCharacter::PlayerPotion(const FInputActionValue& value)
+{
+	if (bPotionOnCooldown) return;
+	if (bIsDodge || bIsReload || bIsFire) return;
+	if (CurrentHP >= TotalStatus.HP) return;
+
+	UsePotion();
+}
+
+void AMainCharacter::ToggleEscMenu(const FInputActionValue& value)
+{
+	UUIManager* UIMgr = UUIManager::Get(this);
+	if (UIMgr)
 	{
-		PlayAnimMotageByState(EAnimState::Reload_Rifle);
+		UIMgr->HandleEscapeAction();
 	}
 }
 
@@ -563,5 +963,180 @@ void AMainCharacter::HandleEquipmentChanged()
 	UE_LOG(LogTemp, Warning, TEXT("Equipment Changed"));
 	
 	EquipmentComponent->CollectStatusModifiers(Modifiers);
-	StatusComponent->CalculateStatusFromModifiers(Modifiers);
+	StatusComponent->UpdateTotalStat();
+	//StatusComponent->CalculateStatusFromModifiers(Modifiers);
+}
+
+const FCharacterStat& AMainCharacter::GetTotalStatus() const
+{
+	return TotalStatus;
+}
+
+void AMainCharacter::SetTotalStatus(const FCharacterStat& NewStatus)
+{
+	float OldMaxHP = static_cast<float>(TotalStatus.HP);
+	float OldMaxStamina = static_cast<float>(TotalStatus.Stamina);
+
+	TotalStatus = NewStatus;
+
+	float NewMaxHP = static_cast<float>(TotalStatus.HP);
+	float NewMaxStamina = static_cast<float>(TotalStatus.Stamina);
+
+	// MaxHP가 변경되면 CurrentHP도 비율 유지
+	if (OldMaxHP > 0.f && !FMath::IsNearlyEqual(OldMaxHP, NewMaxHP))
+	{
+		CurrentHP = FMath::Clamp(CurrentHP * (NewMaxHP / OldMaxHP), 0.f, NewMaxHP);
+	}
+	else if (OldMaxHP <= 0.f)
+	{
+		CurrentHP = NewMaxHP;
+	}
+	OnHPChanged.Broadcast(CurrentHP, NewMaxHP);
+
+	if (OldMaxStamina > 0.f && !FMath::IsNearlyEqual(OldMaxStamina, NewMaxStamina))
+	{
+		CurrentStamina = FMath::Clamp(CurrentStamina * (NewMaxStamina / OldMaxStamina), 0.f, NewMaxStamina);
+	}
+	else if (OldMaxStamina <= 0.f)
+	{
+		CurrentStamina = NewMaxStamina;
+	}
+	OnStaminaChanged.Broadcast(CurrentStamina, NewMaxStamina);
+}
+
+void AMainCharacter::FellOutOfWorld(const UDamageType& DmgType)
+{
+	// KillZ 아래로 떨어지면 즉시 사망 처리 (Super 호출 안 함 - Destroy 방지)
+	if (CurrentHP > 0.f)
+	{
+		CurrentHP = 0.f;
+		OnDeath();
+	}
+}
+
+void AMainCharacter::OnDeath()
+{
+	AMainGameMode* GM = AMainGameMode::Get(this);
+	if (GM)
+	{
+		GM->OnPlayerDead();
+	}
+	
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC)
+	{
+		DisableInput(PC);	// 입력 차단
+		PC->bShowMouseCursor = true;	// 마우스 커서 보이게 하기
+		
+		FInputModeUIOnly InputModeData;	// UI에만 입력 값 넣기
+		InputModeData.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);	// 커서 화면 잠금
+		PC->SetInputMode(InputModeData);
+		
+		// Death 후 캐릭터 Collision Off
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		
+		PlayAnimMotageByState(EAnimState::Death);
+		float MontageLength = MontagesMap[EAnimState::Death].Get()->GetPlayLength(); 
+		
+		if (MontageLength > 0.f)
+		{
+			FTimerHandle DeathAnimTimer;
+			
+			GetWorldTimerManager().SetTimer(
+				DeathAnimTimer,
+				this, 
+				&AMainCharacter::PauseAnim, 
+				MontageLength - 0.3f, 
+				false
+			);
+		}
+	}
+}
+
+void AMainCharacter::Revive()
+{
+	bIsInvicible = false;
+	bIsDodge = false;
+	bIsUsingSkill = false;
+	CurrentState = EAnimState::None;
+
+	CurrentHP = TotalStatus.HP;
+	CurrentStamina = TotalStatus.Stamina;
+
+	OnHPChanged.Broadcast(CurrentHP, static_cast<float>(TotalStatus.HP));
+	OnStaminaChanged.Broadcast(CurrentStamina, static_cast<float>(TotalStatus.Stamina));
+
+	if (GetCapsuleComponent())
+	{
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	}
+	
+	if (GetMesh())
+	{
+		GetMesh()->bPauseAnims = false;
+	}
+	
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC)
+	{
+		PC->bShowMouseCursor = false;
+		
+		EnableInput(PC);
+		
+		FInputModeGameOnly InputModeData;
+		PC->SetInputMode(InputModeData);
+	}
+}
+
+void AMainCharacter::LoadData(FCharacterStat& LoadTotalCharacterStatus, int32 CharacterGold)
+{
+	TotalStatus = LoadTotalCharacterStatus;
+	Gold = CharacterGold;
+	
+	CurrentHP = static_cast<float>(TotalStatus.HP);
+	CurrentStamina = static_cast<float>(TotalStatus.Stamina);
+
+	OnHPChanged.Broadcast(CurrentHP, static_cast<float>(TotalStatus.HP));
+	OnStaminaChanged.Broadcast(CurrentStamina, static_cast<float>(TotalStatus.Stamina));
+}
+
+int32 AMainCharacter::GetGold()
+{
+	return Gold;
+}
+
+void AMainCharacter::AddGold(int32 Amount)
+{
+	Gold += Amount;
+}
+
+void AMainCharacter::ResetGold()
+{
+	Gold = 0;
+}
+
+void AMainCharacter::StartStaminaRegenCooldown()
+{
+	bCanRegenStamina = false;
+	GetWorldTimerManager().ClearTimer(StaminaRegenTimerHandle);
+	GetWorldTimerManager().SetTimer(
+		StaminaRegenTimerHandle,
+		this,
+		&AMainCharacter::OnStaminaRegenReady,
+		StaminaRegenDelay,
+		false
+	);
+}
+
+void AMainCharacter::OnStaminaRegenReady()
+{
+	bCanRegenStamina = true;
+}
+
+void AMainCharacter::PauseAnim()
+{
+	if (GetMesh())
+	{
+		GetMesh()->bPauseAnims = true;
+	}
 }

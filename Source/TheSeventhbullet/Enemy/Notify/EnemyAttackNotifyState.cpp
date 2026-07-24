@@ -5,6 +5,7 @@
 #include"Kismet/KismetSystemLibrary.h"
 #include "GameFramework/Character.h"
 #include "Kismet/GameplayStatics.h"
+#include "System/MainGameMode.h"
 #include "TheSeventhbullet/Character/MainCharacter.h"
 #include "TheSeventhbullet/Enemy/EnemyBase.h"
 #include "WorldPartition/HLOD/DestructibleHLODComponent.h"
@@ -16,9 +17,9 @@ UEnemyAttackNotifyState::UEnemyAttackNotifyState()
 }
 
 void UEnemyAttackNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-                                          float TotalDuration)
+                                          float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration);
+	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 	Owner = MeshComp->GetOwner();
 	if (Owner == nullptr)
 	{
@@ -34,12 +35,14 @@ void UEnemyAttackNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAni
 	                                              GetLocation();
 	PresentAttackSocketLocation = OwnerEnemyBase->GetMesh()->GetSocketTransform(FName("Attack_Socket"), RTS_World).
 	                                              GetLocation();
+	
+	GM = AMainGameMode::Get(MeshComp);
 }
 
 void UEnemyAttackNotifyState::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-                                         float FrameDeltaTime)
+                                         float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime);
+	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 	if (!IsValid(OwnerEnemyBase) || !IsValid(OwnerEnemyBase->GetMesh()))
 	{
 		return;
@@ -92,6 +95,9 @@ void UEnemyAttackNotifyState::NotifyTick(USkeletalMeshComponent* MeshComp, UAnim
 			continue;
 		}
 		
+		if (!GM) return;
+		GM->RequestHit++;
+		
 		//피격당한 목록에 추가
 		HittedCharacterArray.Add(HittedCharacter);
 		//데미지 적용
@@ -102,13 +108,21 @@ void UEnemyAttackNotifyState::NotifyTick(USkeletalMeshComponent* MeshComp, UAnim
 	OwnerEnemyBase,
 			UDamageType::StaticClass()
 			);
+		
+		//넉백 추가
+		KnockBackDirection=HittedCharacter->GetActorLocation()-OwnerEnemyBase->GetActorLocation();
+		KnockBackDirection=FVector(KnockBackDirection.X,KnockBackDirection.Y,0.f);
+		KnockBackDirection.Normalize();
+		KnockBackDirection*=LaunchPowerXY;
+		KnockBackDirection=FVector(KnockBackDirection.X,KnockBackDirection.Y,LaunchPowerZ);
+		HittedCharacter->LaunchCharacter(KnockBackDirection,true,true);
 	}
 }
 
 
-void UEnemyAttackNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UEnemyAttackNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyEnd(MeshComp, Animation);
+	Super::NotifyEnd(MeshComp, Animation, EventReference);
 	//피격당한 목록을 비워준다.
 	HittedCharacterArray.Empty();
 }

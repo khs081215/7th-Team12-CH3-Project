@@ -11,7 +11,7 @@
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Manager/ProjectilePoolManager.h"
-#include "Tests/AutomationEditorCommon.h"
+#include "System/MainGameMode.h"
 
 
 // Sets default values
@@ -23,6 +23,7 @@ AProjectileActor::AProjectileActor()
 	SphereComponent->SetCollisionProfileName(TEXT("BlockAll"));
 	SphereComponent->OnComponentHit.AddDynamic(this, &AProjectileActor::OnProjectileHit);
 	SphereComponent->SetCollisionResponseToChannel(ECollisionChannel::ECC_Visibility,ECR_Ignore);
+	SphereComponent->SetCollisionResponseToChannel(ECollisionChannel::ECC_Camera,ECR_Ignore);
 	//스태틱 메시 설정 및 콜리전 해제
 	ProjectileStaticMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StaticMesh"));
 	ProjectileStaticMesh->SetupAttachment(SphereComponent);
@@ -54,13 +55,14 @@ void AProjectileActor::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor
 	{
 		return;
 	}
-	
 	if (TObjectPtr<AMainCharacter> MainCharacter= Cast<AMainCharacter>(OtherActor))
 	{
+		if (!GM) return;
+		GM->RequestAttack++;
+		
 		UGameplayStatics::ApplyDamage(MainCharacter,AttackPoint,nullptr,this,UDamageType::StaticClass());
 	}
 	GetWorld()->GetSubsystem<UProjectilePoolManager>()->ReturnToPool(this);
-	UE_LOG(LogTemp,Warning,TEXT("Destroyed by %s"), *OtherActor->GetName());
 }
 
 
@@ -92,7 +94,6 @@ void AProjectileActor::SetEnemySetting(TObjectPtr<AEnemyBase> InEnemy)
 		{
 			ProjectileMovement->bIsHomingProjectile=false;
 		}
-		
 		if (PStatus->StaticMesh!=nullptr)
 		{
 			ProjectileStaticMesh->SetStaticMesh(PStatus->StaticMesh);
@@ -101,11 +102,7 @@ void AProjectileActor::SetEnemySetting(TObjectPtr<AEnemyBase> InEnemy)
 		{
 			ProjectileStaticMesh->SetOverlayMaterial(PStatus->Material);
 		}
-		
 	}
-	
-	
-
 }
 
 
@@ -114,7 +111,6 @@ void AProjectileActor::SetActiveAndCollision(bool InActive)
 
 	if (InActive)
 	{
-		
 		SetActorHiddenInGame(false);
 		SphereComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 
@@ -123,10 +119,7 @@ void AProjectileActor::SetActiveAndCollision(bool InActive)
 		ProjectileMovement->Velocity = GetActorForwardVector() * ProjectileMovement->InitialSpeed;
 
 		GetWorld()->GetTimerManager().SetTimer(TimerHandle,this,&AProjectileActor::LifeTimeEnd,5.0f,false);
-		UE_LOG(LogTemp,Warning,TEXT("Activated"));
 		
-
-
 	}
 	else
 	{
@@ -135,7 +128,6 @@ void AProjectileActor::SetActiveAndCollision(bool InActive)
 		ProjectileMovement->StopMovementImmediately();
 		ProjectileMovement->Deactivate();
 		GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
-		UE_LOG(LogTemp,Warning,TEXT("DeActivated"));
 	}
 	
 }
@@ -147,6 +139,11 @@ void AProjectileActor::LifeTimeEnd()
 		return;
 	}
 	GetWorld()->GetSubsystem<UProjectilePoolManager>()->ReturnToPool(this);
-	UE_LOG(LogTemp,Warning,TEXT("TimeEnd"));
+}
+
+void AProjectileActor::BeginPlay()
+{
+	Super::BeginPlay();
+	GM = AMainGameMode::Get(this);
 }
 

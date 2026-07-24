@@ -4,7 +4,7 @@
 #include "Components/TextBlock.h"
 #include "Components/PanelWidget.h"
 #include "Manager/UIManager.h"
-#include "Manager/LevelTransitionManager.h"
+#include "System/GameInstance/MainGameInstance.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -107,24 +107,32 @@ void UEscMenuWidget::OnResumeClicked()
 
 void UEscMenuWidget::OnSettingsClicked()
 {
-	// TODO: Settings UI Push
+	if (UUIManager* UIMgr = UUIManager::Get(this))
+	{
+		UIMgr->Open(UITags::Option);
+	}
 }
 
 void UEscMenuWidget::OnBackToMenuClicked()
 {
 	if (UUIManager* UIMgr = UUIManager::Get(this))
 	{
-		UIMgr->PopAll();
+		UIMgr->Close(UITags::EscMenu);
 	}
 
-	ULevelTransitionManager* LTM = ULevelTransitionManager::Get(this);
-	if (LTM)
+	UMainGameInstance* GI = UMainGameInstance::Get(this);
+	if (GI)
 	{
-		LTM->LoadLevel(MainMenuMapName);
+		GI->ReturnToMainMenu();
 	}
 }
 
 void UEscMenuWidget::OnQuitGameClicked()
 {
+	UMainGameInstance* GI = UMainGameInstance::Get(this);
+	if (GI)
+	{
+		GI->SaveGameData();
+	}
 	UKismetSystemLibrary::QuitGame(this, nullptr, EQuitPreference::Quit, true);
 }

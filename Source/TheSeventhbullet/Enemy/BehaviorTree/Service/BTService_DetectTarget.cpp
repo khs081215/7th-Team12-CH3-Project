@@ -11,45 +11,58 @@ UBTService_DetectTarget::UBTService_DetectTarget()
 	Interval = 0.5f;
 	RandomDeviation = 0.1f;
 
-	//DetectTarget에는 AActor 클래스만 올 수 있다.
+	//TargetActor에는 AActor 클래스만 올 수 있다.
 	TargetActorKey.AddObjectFilter(this, GET_MEMBER_NAME_CHECKED(UBTService_DetectTarget, TargetActorKey), AActor::StaticClass());
+	//Distance에는 float만 올수 있다.
+	DistanceKey.AddFloatFilter(this,GET_MEMBER_NAME_CHECKED(UBTService_DetectTarget, DistanceKey));
+	//OnBecomeRelevant 활성화
+	bNotifyBecomeRelevant = true;
+}
+
+void UBTService_DetectTarget::OnBecomeRelevant(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+	//(싱글플레이 전용)플레이어 폰을 Blackboard에 세팅합니다.
+	APawn* PlayerPawn=UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
+	OwnerComp.GetBlackboardComponent()->SetValueAsObject(TargetActorKey.SelectedKeyName, PlayerPawn);
+	//SelfActor를 Blackboard에 세팅합니다.
+	AAIController* AiController = OwnerComp.GetAIOwner();
+	if (AiController == nullptr || AiController->GetPawn() == nullptr)
+	{
+		return;
+	}
+	APawn* EnemyPawn=OwnerComp.GetAIOwner()->GetPawn();
+	OwnerComp.GetBlackboardComponent()->SetValueAsObject(SelfActorKey.SelectedKeyName, EnemyPawn);
+	
 }
 
 void UBTService_DetectTarget::TickNode(
 	UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
-
-	//AIController를 가져옵니다.
+	
+	//TargetActor, SelfActor를 Blackboard에서 가져옵니다.
+	APawn* PlayerPawn=Cast<APawn>(OwnerComp.GetBlackboardComponent()->GetValueAsObject(TargetActorKey.SelectedKeyName));
+	APawn* EnemyPawn=Cast<APawn>(OwnerComp.GetBlackboardComponent()->GetValueAsObject(SelfActorKey.SelectedKeyName));
+	
+	if (PlayerPawn==nullptr||EnemyPawn==nullptr)
+	{
+		return;
+	}
+	
+	//AIController와 플레이어폰을 가져옵니다.
 	AAIController* AiController = OwnerComp.GetAIOwner();
 	if (AiController == nullptr || AiController->GetPawn() == nullptr)
 	{
 		return;
 	}
-
-	//플레이어 폰을 가져옵니다.
-	APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
-	if (PlayerPawn == nullptr)
-	{
-		OwnerComp.GetBlackboardComponent()->ClearValue(TargetActorKey.SelectedKeyName);
-		UE_LOG(LogTemp,Warning,TEXT("No Pawn"));
-		return;
-	}
-
+	
+	
 	//거리를 구합니다.
 	const float Distance = FVector::Dist(
-		AiController->GetPawn()->GetActorLocation(),
-		PlayerPawn->GetActorLocation());
+		PlayerPawn->GetActorLocation(),
+		EnemyPawn->GetActorLocation());
 	
-	//UE_LOG(LogTemp,Warning,TEXT("%f"),Distance);
-	
-	//플레이어와 적 사이의 거리를 판단해 가까우면 BB에 설정하고, 멀면 버립니다.
-	if (Distance <= DetectRadius)
-	{
-		OwnerComp.GetBlackboardComponent()->SetValueAsObject(TargetActorKey.SelectedKeyName, PlayerPawn);
-	}
-	else
-	{
-		OwnerComp.GetBlackboardComponent()->ClearValue(TargetActorKey.SelectedKeyName);
-	}
+	//거리를 블랙보드 키에 반영합니다.
+	OwnerComp.GetBlackboardComponent()->SetValueAsFloat(DistanceKey.SelectedKeyName,Distance);
+
 }

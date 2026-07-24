@@ -43,9 +43,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	FItemInstance FindItemByID(FPrimaryAssetId ItemID) const;
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	int32 GetCountByID(FPrimaryAssetId ItemID) const;
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	TArray<FItemInstance> GetAllItems() const { return Items; }
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool HasEmptySlot() const { return Items.Num() < MaxSlots; }
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	bool AddSoulGem(FPrimaryAssetId ItemID, const FSoulGemInstance& SoulGemData);
 
 	// Drag & Drop
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
@@ -66,6 +71,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory")
 	FOnInventoryChanged OnItemRemoved;
 	
+	UFUNCTION()
+	void LoadData(TArray<FItemInstance>& InventoryItem);
+	
+	void ClearAllItems();
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
 	TArray<FItemInstance> Items;

@@ -3,14 +3,23 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Data/TableRowTypes.h"
 #include "GameFramework/Character.h"
 #include "EnemyBase.generated.h"
 
+class UBossPatternComponentInterface;
+class UMainGameInstance;
+
 #pragma region DELEGATE
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCharacterEventSignnature);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCharacterSetAISignnature,
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FOnCharacterSetAISignnature,
 											UBehaviorTree*,ParamBT,
-											float,AttackRadius);
+											float,AttackRadius,
+											bool,bIsLongRange,
+											float, Speed,
+											float, StrafeSpeed,
+											float, EnemyAttackDelay
+											);
 #pragma endregion
 
 
@@ -18,6 +27,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCharacterSetAISignnature,
  * PDA를 통해 로드 완료된 데이터를 가져와서 적 캐릭터 정보를 들고 있고, 피격 등의 이벤트를 진행합니다.
  */
 class UBehaviorTree;
+class UBossPatternDataAsset;
 struct FProjectileStatus;
 UCLASS()
 class THESEVENTHBULLET_API AEnemyBase : public ACharacter
@@ -35,7 +45,7 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
-	
+
 #pragma region DELEGATE METHOD
 	UPROPERTY(BlueprintAssignable, Category="Events")
 	FOnCharacterEventSignnature OnCharacterHit;
@@ -49,7 +59,9 @@ public:
 	//비헤이비어 트리 초기 세팅을 위한 델리게이트
 	UPROPERTY(BlueprintAssignable, Category="Settings")
 	FOnCharacterSetAISignnature OnCharacterSetAI;
-
+	
+	//가져온 PDA를 캐싱하기 위한 변수
+	TObjectPtr<UEnemyDataAsset> EnemyData;
 	
 #pragma endregion
 	
@@ -60,6 +72,8 @@ public:
 	void SetupEnemy(UEnemyDataAsset* LoadedData);
 	//공격력을 반환합니다.
 	float GetAttackPoint();
+	float GetArmorPoint() const { return ArmorPoint; }
+	bool IsDead() const { return bIsDead; }
 	
 	
 	//발사체의 정보를 담고 있습니다.
@@ -82,6 +96,15 @@ public:
 	UFUNCTION()
 	void SetMonsterType(EMonsterType InEnemyMonsterType);
 	
+	// 주현 : DropItem 함수
+	UFUNCTION()
+	void DropItem();
+	
+	virtual void SetHealth(float NewHealth);
+	float GetHealth();
+	float GetMaxHealth();
+	
+	void ReturnToPool();
 
 protected:
 #pragma region EnemyStatus
@@ -105,8 +128,7 @@ protected:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Enemy|Hit")
     UParticleSystem* HeadShotParticle;
 	
-	//가져온 PDA를 캐싱하기 위한 변수
-	TObjectPtr<UEnemyDataAsset> EnemyData;
+
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Enemy")
 	EMonsterType EnemyMonsterType;
@@ -128,12 +150,37 @@ protected:
 	AActor* DamageCauser
 	);
 	
+	UFUNCTION(BlueprintCallable)
+	virtual float TakeDamage(
+				float DamageAmount, 
+				FDamageEvent const& DamageEvent, 
+				AController* EventInstigator, 
+				AActor* DamageCauser
+		) override;
 	
-	void SetHealth(float NewHealth);
+	
+	
 	void DisplayParticle(FVector HitLocation, UParticleSystem* InParticle);
-	void ReturnToPool();
 
+	
+	virtual void SetPattern(UBossPatternDataAsset* PatternData) PURE_VIRTUAL (AEnemyBase::SetBossPattern,);
+	virtual void PlayPattern(FString PatternName)PURE_VIRTUAL (AEnemyBase::PlayPattern,);
 private:
 	bool bIsDead;
+	// 주현 : 아이템이 혹시나 중복드랍되는 것을 막기 위한 boolean
+	bool bDroppedItem = false;
+	
+	float FinalDamage;
+	
+	//게임인스턴스
+	UPROPERTY()
+	TObjectPtr<UMainGameInstance> GI;
+	
+	//일차 캐싱
+	UPROPERTY()
+	int32 CurrentDay;
+	
+	UFUNCTION()
+	void OnPlayerDeath();
 	
 };

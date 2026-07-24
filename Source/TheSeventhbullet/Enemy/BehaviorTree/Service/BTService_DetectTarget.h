@@ -17,11 +17,15 @@ public:
 	UBTService_DetectTarget();
 
 protected:
-	virtual void TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
-
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	FBlackboardKeySelector TargetActorKey;
-
-	UPROPERTY(EditAnywhere, Category = "AI")
-	float DetectRadius = 1000.0f;
+	
+	UPROPERTY(EditAnywhere, Category = "Blackboard")
+	FBlackboardKeySelector SelfActorKey;
+	
+	UPROPERTY(EditAnywhere, Category = "Blackboard")
+	FBlackboardKeySelector DistanceKey;
+	
+	virtual void OnBecomeRelevant(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
+	virtual void TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 };

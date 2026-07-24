@@ -1,16 +1,9 @@
 #include "WeaponDamageModifier.h"
 
-#include "Weapon/WeaponBase.h"
-
 void UWeaponDamageModifier::ModifyDamage(FDamageContext& Context)
 {
 	Super::ModifyDamage(Context);
 	
-	if (!Context.Weapon)
-	{
-		return;
-	}
-	
-	Context.WeaponDamage = Context.Weapon->GetBaseDamage();
-	Context.CurrentDamage = Context.WeaponDamage;
+	Context.CurrentCritChance += Context.WeaponCritChanceBalance;
+	Context.CurrentCritDamage += Context.WeaponCritDamageBalance;
 }
