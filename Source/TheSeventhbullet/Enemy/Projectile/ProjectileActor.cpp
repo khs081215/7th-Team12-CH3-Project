@@ -62,7 +62,20 @@ void AProjectileActor::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor
 		
 		UGameplayStatics::ApplyDamage(MainCharacter,AttackPoint,nullptr,this,UDamageType::StaticClass());
 	}
-	GetWorld()->GetSubsystem<UProjectilePoolManager>()->ReturnToPool(this);
+	if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("ObjectPool.Start")))
+	{
+		if (CVar->GetInt()==0)
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_Destroy);
+			Destroy();
+			UE_LOG(LogTemp,Warning,TEXT("Destroyed"));
+		}
+		else
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_PoolReturn);
+			GetWorld()->GetSubsystem<UProjectilePoolManager>()->ReturnToPool(this);
+		}
+	}
 }
 
 
@@ -138,7 +151,21 @@ void AProjectileActor::LifeTimeEnd()
 	{
 		return;
 	}
-	GetWorld()->GetSubsystem<UProjectilePoolManager>()->ReturnToPool(this);
+	if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("ObjectPool.Start")))
+	{
+		if (CVar->GetInt()==0)
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_Destroy);
+			Destroy();
+			UE_LOG(LogTemp,Warning,TEXT("Destroyed"));
+		}
+		else
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_PoolReturn);
+			GetWorld()->GetSubsystem<UProjectilePoolManager>()->ReturnToPool(this);
+		}
+	}
+
 }
 
 void AProjectileActor::BeginPlay()

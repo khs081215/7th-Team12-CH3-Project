@@ -19,7 +19,7 @@ void UProjectilePoolManager::Initialize(FSubsystemCollectionBase& SubsystemColle
 	
 	for (int32 i=0;i<50;i++)
 	{
-		TObjectPtr<AActor> Projectile=GetWorld()->SpawnActor<AProjectileActor>();
+		AProjectileActor* Projectile=GetWorld()->SpawnActor<AProjectileActor>();
 		Projectile->SetActorTransform(ProjectileTransform);
 		Projectile->SetActorHiddenInGame(true);
 		ProjectilePool.Add(Projectile);
@@ -27,7 +27,7 @@ void UProjectilePoolManager::Initialize(FSubsystemCollectionBase& SubsystemColle
 	
 }
 
-TObjectPtr<AActor> UProjectilePoolManager::GetProjectile()
+AProjectileActor* UProjectilePoolManager::GetProjectile()
 {
 	for (int32 i=0;i<50;i++)
 	{
