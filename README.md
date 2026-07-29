@@ -1,100 +1,105 @@
 # The Seventh Bullet
 
-> 로그라이크 던전 크롤러 | 3인칭 슈터 | Unreal Engine 5.5
+> Unreal Engine 5.5 기반 3인칭 슈터 게임 · 적 AI 시스템 설계 및 데이터 드리븐 확장 구조 구현
 
-## 개요
+**[▶ 시연 영상]([The Seventhbullet Demo Video - YouTube](https://www.youtube.com/watch?v=4-i-LEJV7RU))** 
 
-**The Seventh Bullet**은 마을에서 의뢰를 수락하고, 던전에서 웨이브 기반 전투를 수행하며, 획득한 소재로 소울 젬을 제작하여 캐릭터를 강화하는 로그라이크 던전 크롤러입니다.
+<!-- 스크롤 없이 보이는 영역. 여기까지가 리뷰어가 확실히 읽는 부분입니다. -->
 
-## 게임 플로우
+---
+
+## 프로젝트 개요
+
+|             |                                                                                    |
+| ----------- | ---------------------------------------------------------------------------------- |
+| **기간**      | 2026.02 ~ 2026.03 (2개월)                                                            |
+| **팀 구성**    | 5명 (클라이언트 5)                                                                       |
+| **본인 역할**   | 클라이언트 · 적 AI 시스템 설계 및 구현 · 기획 일부                                                   |
+| **엔진 / 언어** | Unreal Engine 5.5 · C++                                                            |
+| **주요 기술**   | Behavior Tree, Blackboard, AI Perception, EQS, Primary Data Asset, Unreal Insights |
+
+> 팀 프로젝트입니다. 본 레포는 원본 저장소의 포크본이며, 아래 "본인 구현 범위"에 명시한 부분이 직접 작성한 코드입니다.
+
+---
+
+## 본인 구현 범위
+
+**[전체 커밋 보기](https://github.com/khs081215/7th-Team12-CH3-Project/commits?author=khs081215)**
+
+| 영역                         | 주요 파일                                                        |
+| -------------------------- | ------------------------------------------------------------ |
+| 적 베이스 클래스 / EnemyBase 통합   | `Source/TheSeventhbullet/Enemy/EnemyBase.h`, `EnemyBase.cpp` |
+| AI 컨트롤러                    | `Source/TheSeventhbullet/Enemy/EnemyAIControllerBase.h`      |
+| BT Service · Task 노드 (C++) | `Source/TheSeventhbullet/Enemy/BehaviorTree/`                |
+| 발사체 · 오브젝트 풀               | `Source/TheSeventhbullet/Enemy/Projectile/ProjectileActor.h` |
+| EnemyDataAsset (PDA)       | `Source/TheSeventhbullet/DataAsset/EnemyDataAsset.h`         |
+| 보스 패턴 · LevelSequence 컷씬   | `Source/TheSeventhbullet/Enemy/Boss/`                        |
+
+---
+
+## 핵심 구현
+
+### 1. 다종 Enemy 데이터 드리븐 확장 구조 리팩토링
+
+**문제**  
+처음엔 WereWolf 1종만 두고 BT·Blackboard·AnimBP가 짜여 있어, 적 5종(WereWolf·Kwang·Rampage·Sparrow·Boss)을 추가하려면 자산을 복제하고 공통 행동(Detect/Attack/Hit/Dead)을 매번 다시 작성해야 했음.
+
+**해결**  
+WereWolf 자산을 `EnemyBase`로 승격하고 BT·Blackboard를 단일 공유 트리로 통합. 적마다 달라지는 값(스탯·공격 패턴·감지 특성)만 `EnemyDataAsset`(Primary Data Asset)으로 분리. 신규 적은 DataAsset 하나만 작성하면 공통 트리를 그대로 사용하도록 함. 보스는 공격 패턴 구조가 달라 별도 BT를 유지.
+
+**설계 판단**  
+공통 행동 플로우(순찰→추격→공격→피격→사망)가 모든 적에 동일하므로 BT/BB는 통합하고 값만 PDA로 분리하는 방식이 유지보수·확장 양쪽에 유리하다고 판단. 적마다 BT를 별도로 유지하는 방식은 행동 수정 시 모든 BT를 동기화해야 하는 문제가 있어 제외. Skeletal Mesh·Anim Montage 등 무거운 에셋은 `TSoftObjectPtr` + Asset Bundle로 비동기 로딩해 웨이브 시작 전 선행 로드.
+
+**결과**  
+신규 적 추가 시 `EnemyDataAsset` 하나만 작성하면 되어, WereWolf → Kwang → Rampage → Sparrow 순서로 적 추가 공수가 크게 낮아짐.
+
+---
+
+### 2. AI Perception 기반 감지 시스템 도입
+
+**문제**  
+거리 기반 감지는 시야각·장애물을 무시하고 반경 내 플레이어를 즉시 감지해 게임플레이상 부자연스러웠음.
+
+**해결**  
+AI Perception으로 전환해 Sight·Hearing·Prediction 3종 센스를 조합. 시야각·감지 거리 등 모든 감지 파라미터를 `EnemyDataAsset`으로 추출해 적마다 다르게 설정 가능하도록 함. 감지 이벤트가 Blackboard에 대상을 기록하면 BT가 타겟 유무로 추격/순찰을 자동 분기.
+
+**설계 판단**  
+감지 값을 코드에 하드코딩하지 않고 DataAsset으로 분리한 이유는 기획자가 에디터에서 직접 조정할 수 있도록 하기 위함.
+
+**결과**  
+적마다 Sight/Hearing 파라미터를 달리 설정해 원거리 적·근거리 적의 감지 행동이 자연스럽게 차별화됨.
+
+---
+
+### 3. 오브젝트 풀링 성능 검증 (Unreal Insights + CVar)
+
+**문제**  
+발사체 풀링을 도입했으나 실제 개선 효과가 수치로 검증되지 않은 상태. 성능 향상을 주장하려면 근거가 필요.
+
+**해결**  
+풀 경로와 `SpawnActor` 경로를 `CVar(ECVF_Cheat)` 런타임 토글로 분리해 ON/OFF 각 5회 측정. GPU 트랙을 대조군으로 두어 측정 간 머신 상태 변동을 배제. 스폰 집계에 발사체 외 액터가 섞인 것을 발견해 `TRACE_CPUPROFILER_EVENT_SCOPE`로 생성·소멸 구간만 격리해 재측정.
+
+**설계 판단**  
+단순 FPS 비교 대신 CPU/GPU를 분리해 병목 위치를 먼저 파악. 프레임 병목이 GPU에 있음을 확인했고, 발사체 풀링의 절감분이 프레임타임의 **0.01% 미만**으로 측정 편차 범위 내에 있어 FPS 개선을 수치로 주장하지 않기로 결정. 스폰 빈도가 더 높은 시나리오에서는 효과가 있을 수 있으므로 풀 구조 자체는 유지.
+
+**결과**  
+이 프로젝트 조건에서 풀링의 FPS 개선 효과는 없음을 수치로 확인. 검증 방법론(CVar 토글 + CPU 프로파일러 격리)은 이후 다른 최적화 항목에도 재사용 가능.
+
+---
+
+## 빌드 및 실행
 
 ```
-메인 메뉴 → 마을(Town) → 의뢰 수락 → 던전(Dungeon) → 웨이브 전투 → 보상 → 마을 복귀
-                ↕                         ↕
-        스탯 강화 / 제작 / 도박       보스 스테이지(Boss)
+엔진 버전 : Unreal Engine 5.5
+필요 항목 : Visual Studio 2022 (MSVC 14.38, Windows 11 SDK 22621)
 ```
 
-## 핵심 시스템
+1. 레포를 클론합니다.
+2. `TheSeventhBullet.uproject` 우클릭 → Generate Visual Studio project files
+3. `TheSeventhBullet.sln`을 열고 빌드 타겟을 `Development Editor / Win64`로 설정 후 빌드
 
-### 전투
-- **히트스캔 슈팅**: 카메라 기반 레이캐스트, 무기별 스프레드
-- **무기 3종**: HandGun / AssaultRifle / ShotGun
-- **데미지 파이프라인**: DamageContext → StatusModifier → WeaponModifier → 크리티컬 판정 → 특수 옵션
-- **플레이어 스킬**: 쿨타임 기반 액티브 스킬, 보스 패턴 캔슬 가능
+---
 
-### 웨이브 시스템
-- **State Machine**: None → Begin → Progress → End → Intermission → Result
-- **오브젝트 풀링**: 몬스터 사전 생성 + 비동기 에셋 로딩
-- **Day 스케일링**: 진행 일수에 따라 적 스탯 점진적 증가
+## 참고
 
-### 적 AI
-- **Behavior Tree + EQS**: 데이터 주도 AI 행동 제어
-- **AI Perception**: 시각/청각/예측 기반 타겟 감지
-- **보스 시스템**: LevelSequence 연출, 다단계 페이즈, 패턴 컴포넌트(BreakGround/Razor)
-
-### 로그라이크 빌드
-- **소울 젬 제작**: 소재 3~4개 조합 → 랜덤 스탯/특수 옵션 부여
-- **특수 옵션**: DoubleShot, Lifesteal, Heartsteal, BloodBullet
-- **스탯 강화**: 골드로 영구 스탯 업그레이드
-
-### 마을 시설
-- 게시판(의뢰) / 제작대(소울 젬) / 상점(스탯 강화) / 창고 / 도박장 / 세이브 포인트
-- InteractableInterface 기반 통일된 상호작용
-
-## 기술 스택
-
-| 구분 | 기술 |
-|------|------|
-| 엔진 | Unreal Engine 5.5 |
-| 언어 | C++  |
-| AI | Behavior Tree, EQS, AI Perception |
-| 데이터 | DataAsset (7종), DataTable (5종) |
-| 레벨 | Level Streaming (Persistent + Sub-Level) |
-| 연출 | Level Sequence (보스 패턴) |
-| 최적화 | Object Pooling, Async Asset Loading |
-
-## 설계 패턴
-
-| 패턴 | 적용 |
-|------|------|
-| State Machine | 웨이브 상태 전환 |
-| Modifier Pipeline | 데미지 계산 |
-| Object Pooling | 몬스터/투사체 관리 |
-| Component Architecture | 캐릭터, 상호작용 |
-| DataAsset | 데이터-로직 분리 |
-| Observer (Delegate) | 시스템 간 통신 |
-| Subsystem | 전역 매니저 |
-
-## 프로젝트 구조
-
-```
-Source/TheSeventhbullet/
-├── Character/          # 플레이어 (컴포넌트, 애니메이션, 데미지타입)
-├── Enemy/              # 적 (보스, AI, BehaviorTree, 투사체, 노티파이)
-├── Wave/               # 웨이브 FSM, 스폰, 레벨 스트리밍 트리거
-├── Damage/             # 데미지 컨텍스트, 모디파이어 파이프라인
-├── DataAsset/          # 무기/적/아이템/소재/소울젬/보스패턴/UI 데이터
-├── Interaction/        # 마을 상호작용 (제작, 강화, 도박, 저장, 재활용)
-├── Inventory/          # 인벤토리, 아이템 인스턴스
-├── SoulGem/            # 소울 젬 인스턴스
-├── UI/                 # 위젯 37개 (HUD, 인벤토리, 제작, 도박, 메뉴)
-├── Manager/            # UI/Data/Sound/ProjectilePool 매니저
-├── System/             # GameMode, GameState, GameInstance, SubSystem
-└── Data/               # 세이브/로드, 데이터 타입 정의
-```
-
-## 맵 구성
-
-| 맵                | 용도              |
-|------------------|-----------------|
-| `L_Town`         | 마을 (상점, 제작, 의뢰) |
-| `L_Dungeon`      | 던전 (웨이브 전투)     |
-| `L_Boss`         | 보스 스테이지         |
-| `L_BossSequence` | 보스 레벨 시퀀스       |
-
-
-## 빌드
-
-1. Unreal Engine 5.5 설치
-2. 프로젝트 폴더에서 `.uproject` 파일 더블클릭
-3. Visual Studio에서 빌드 또는 에디터에서 실행
+- [원본 팀 저장소](https://github.com/NBcampUnrealTrack/7th-Team12-CH3-Project)
