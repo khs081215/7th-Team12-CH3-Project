@@ -9,6 +9,15 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Manager/ProjectilePoolManager.h"
 
+
+static TAutoConsoleVariable<int32> CVarLogPool(
+	TEXT("ObjectPool.Start"), // 콘솔창에 입력할 명령어
+	0,                            // 기본값 (0: 비활성화, 1: 활성화)
+	TEXT("오브젝트 풀 On/Off\n")
+	TEXT("0: 비활성화, 1: 활성화"),
+	ECVF_Cheat                    // 치트 명령어로 분류 (배포 빌드 제어 가능)
+);
+
 UEnemyProjectileAttackNotify::UEnemyProjectileAttackNotify()
 {
 	
@@ -29,13 +38,35 @@ void UEnemyProjectileAttackNotify::Notify(USkeletalMeshComponent* MeshComp, UAni
 	{
 		return;
 	}
-	//오브젝트 풀에서 발사체 하나를 가져옵니다.
-	TObjectPtr<AActor> Actor=MeshComp->GetWorld()->GetSubsystem<UProjectilePoolManager>()->GetProjectile();
-	if (Actor==nullptr)
+	if (CVarLogPool.GetValueOnGameThread()==1)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_PoolGet);
+		//오브젝트 풀에서 발사체 하나를 가져옵니다.
+		ProjectileActor=MeshComp->GetWorld()->GetSubsystem<UProjectilePoolManager>()->GetProjectile();
+		if (ProjectileActor==nullptr)
+		{
+			return;
+		}
+	}
+	else
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_SpawnActor);
+		// SpawnActor
+		if (UWorld* World=MeshComp->GetWorld())
+		{
+			ProjectileActor=World->SpawnActor<AProjectileActor>();
+		}
+		else
+		{
+			return;
+		}
+	}
+	
+	if (!ProjectileActor)
 	{
 		return;
 	}
-	ProjectileActor=Cast<AProjectileActor>(Actor);
+	
 	//발사체의 Status를 세팅합니다.
 	ProjectileActor->SetEnemySetting(EnemyCharacter);
 
