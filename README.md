@@ -4,8 +4,6 @@
 
 **[▶ 시연 영상]([The Seventhbullet Demo Video - YouTube](https://www.youtube.com/watch?v=4-i-LEJV7RU))** 
 
-<!-- 스크롤 없이 보이는 영역. 여기까지가 리뷰어가 확실히 읽는 부분입니다. -->
-
 ---
 
 ## 프로젝트 개요
@@ -51,7 +49,7 @@ WereWolf 자산을 `EnemyBase`로 승격하고 BT·Blackboard를 단일 공유 �
 공통 행동 플로우(순찰→추격→공격→피격→사망)가 모든 적에 동일하므로 BT/BB는 통합하고 값만 PDA로 분리하는 방식이 유지보수·확장 양쪽에 유리하다고 판단. 적마다 BT를 별도로 유지하는 방식은 행동 수정 시 모든 BT를 동기화해야 하는 문제가 있어 제외. Skeletal Mesh·Anim Montage 등 무거운 에셋은 `TSoftObjectPtr` + Asset Bundle로 비동기 로딩해 웨이브 시작 전 선행 로드.
 
 **결과**  
-신규 적 추가 시 `EnemyDataAsset` 하나만 작성하면 되어, WereWolf → Kwang → Rampage → Sparrow 순서로 적 추가 공수가 크게 낮아짐.
+신규 적 추가 시 `EnemyDataAsset` 하나만 작성하면 되어, WereWolf → Kwang → Rampage → Sparrow 순서로 적 추가 공수가 크게 낮아짐. (Boss도 PDA에서 BT만 변경하면 동일한 구조를 따른다.)
 
 ---
 
@@ -61,13 +59,13 @@ WereWolf 자산을 `EnemyBase`로 승격하고 BT·Blackboard를 단일 공유 �
 거리 기반 감지는 시야각·장애물을 무시하고 반경 내 플레이어를 즉시 감지해 게임플레이상 부자연스러웠음.
 
 **해결**  
-AI Perception으로 전환해 Sight·Hearing·Prediction 3종 센스를 조합. 시야각·감지 거리 등 모든 감지 파라미터를 `EnemyDataAsset`으로 추출해 적마다 다르게 설정 가능하도록 함. 감지 이벤트가 Blackboard에 대상을 기록하면 BT가 타겟 유무로 추격/순찰을 자동 분기.
+AI Perception으로 전환해 Sight·Hearing·Prediction 3종 센스를 조합. 시야각·감지 거리 등 SenseConfig 파라미터는 AIController 블루프린트의 디폴트 값으로 설정. 단, 공격 사거리가 시야 반경보다 길면 런타임에서 SightRadius를 공격 사거리에 맞게 보정(`SightRadius = AttackRadius + 50`)해 감지 누락을 방지. 감지 이벤트가 Blackboard에 대상을 기록하면 BT가 타겟 유무로 추격/순찰을 자동 분기.
 
 **설계 판단**  
-감지 값을 코드에 하드코딩하지 않고 DataAsset으로 분리한 이유는 기획자가 에디터에서 직접 조정할 수 있도록 하기 위함.
+SenseConfig 값은 블루프린트 디폴트로 관리해 에디터에서 직접 조정 가능하도록 함. 공격 사거리 보정 로직은 코드로 처리해 SightRadius 설정을 잊었을 때 발생하는 "공격 범위 내인데 감지 못 함" 버그를 방지.
 
 **결과**  
-적마다 Sight/Hearing 파라미터를 달리 설정해 원거리 적·근거리 적의 감지 행동이 자연스럽게 차별화됨.
+Sight로 플레이어 포착 시 추격, 시야 이탈 시 Prediction으로 예상 위치를 0.25초 뒤에 마킹해 자연스러운 수색 행동 구현. Hearing으로 총성 위치도 Blackboard에 기록해 청각 반응도 동작.
 
 ---
 
@@ -83,7 +81,7 @@ AI Perception으로 전환해 Sight·Hearing·Prediction 3종 센스를 조합. 
 단순 FPS 비교 대신 CPU/GPU를 분리해 병목 위치를 먼저 파악. 프레임 병목이 GPU에 있음을 확인했고, 발사체 풀링의 절감분이 프레임타임의 **0.01% 미만**으로 측정 편차 범위 내에 있어 FPS 개선을 수치로 주장하지 않기로 결정. 스폰 빈도가 더 높은 시나리오에서는 효과가 있을 수 있으므로 풀 구조 자체는 유지.
 
 **결과**  
-이 프로젝트 조건에서 풀링의 FPS 개선 효과는 없음을 수치로 확인. 검증 방법론(CVar 토글 + CPU 프로파일러 격리)은 이후 다른 최적화 항목에도 재사용 가능.
+이 프로젝트 조건에서는 풀링의 FPS 개선 효과가 측정 편차를 넘지 못함을 확인. 검증 방법론(CVar 토글 + CPU 프로파일러 격리)은 이후 다른 최적화 항목에도 재사용 가능.
 
 ---
 
@@ -95,8 +93,8 @@ AI Perception으로 전환해 Sight·Hearing·Prediction 3종 센스를 조합. 
 ```
 
 1. 레포를 클론합니다.
-2. `TheSeventhBullet.uproject` 우클릭 → Generate Visual Studio project files
-3. `TheSeventhBullet.sln`을 열고 빌드 타겟을 `Development Editor / Win64`로 설정 후 빌드
+2. `TheSeventhbullet.uproject` 우클릭 → Generate Visual Studio project files
+3. `TheSeventhbullet.sln`을 열고 빌드 타겟을 `Development Editor / Win64`로 설정 후 빌드
 
 ---
 
