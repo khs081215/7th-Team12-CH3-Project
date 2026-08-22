@@ -43,7 +43,7 @@
 처음엔 WereWolf 1종만 두고 BT·Blackboard·AnimBP가 짜여 있어, 적 5종(WereWolf·Kwang·Rampage·Sparrow·Boss)을 추가하려면 자산을 복제하고 공통 행동(Detect/Attack/Hit/Dead)을 매번 다시 작성해야 했음.
 
 **해결**  
-WereWolf 자산을 `EnemyBase`로 승격하고 BT·Blackboard를 단일 공유 트리로 통합. 적마다 달라지는 값(스탯·공격 패턴·감지 특성)만 `EnemyDataAsset`(Primary Data Asset)으로 분리. 신규 적은 DataAsset 하나만 작성하면 공통 트리를 그대로 사용하도록 함. 보스는 공격 패턴 구조가 달라 별도 BT를 유지.
+WereWolf 자산을 `EnemyBase`로 승격하고 BT·Blackboard를 단일 공유 트리로 통합. 적마다 달라지는 값(스탯·메시·애니메이션·BT)만 `EnemyDataAsset`(Primary Data Asset)으로 분리. 신규 적은 DataAsset 하나만 작성하면 공통 트리를 그대로 사용하도록 함. 보스는 공격 패턴 구조가 달라 별도 BT를 유지.
 
 **설계 판단**  
 공통 행동 플로우(순찰→추격→공격→피격→사망)가 모든 적에 동일하므로 BT/BB는 통합하고 값만 PDA로 분리하는 방식이 유지보수·확장 양쪽에 유리하다고 판단. 적마다 BT를 별도로 유지하는 방식은 행동 수정 시 모든 BT를 동기화해야 하는 문제가 있어 제외. Skeletal Mesh·Anim Montage 등 무거운 에셋은 `TSoftObjectPtr` + Asset Bundle로 비동기 로딩해 웨이브 시작 전 선행 로드.
@@ -65,7 +65,7 @@ AI Perception으로 전환해 Sight·Hearing·Prediction 3종 센스를 조합. 
 SenseConfig 값은 블루프린트 디폴트로 관리해 에디터에서 직접 조정 가능하도록 함. 공격 사거리 보정 로직은 코드로 처리해 SightRadius 설정을 잊었을 때 발생하는 "공격 범위 내인데 감지 못 함" 버그를 방지.
 
 **결과**  
-Sight로 플레이어 포착 시 추격, 시야 이탈 시 Prediction으로 예상 위치를 0.25초 뒤에 마킹해 자연스러운 수색 행동 구현. Hearing으로 총성 위치도 Blackboard에 기록해 청각 반응도 동작.
+Sight로 플레이어 포착 시 추격, 시야 이탈 시 Prediction으로 예상 위치를 0.5초 뒤에 마킹해 자연스러운 수색 행동 구현. Hearing으로 총성 위치도 Blackboard에 기록해 청각 반응도 동작.
 
 ---
 
@@ -75,13 +75,13 @@ Sight로 플레이어 포착 시 추격, 시야 이탈 시 Prediction으로 예�
 발사체 풀링을 도입했으나 실제 개선 효과가 수치로 검증되지 않은 상태. 성능 향상을 주장하려면 근거가 필요.
 
 **해결**  
-풀 경로와 `SpawnActor` 경로를 `CVar(ECVF_Cheat)` 런타임 토글로 분리해 ON/OFF 각 5회 측정. GPU 트랙을 대조군으로 두어 측정 간 머신 상태 변동을 배제. 스폰 집계에 발사체 외 액터가 섞인 것을 발견해 `TRACE_CPUPROFILER_EVENT_SCOPE`로 생성·소멸 구간만 격리해 재측정.
+풀 경로와 `SpawnActor` 경로를 `CVar(ECVF_Cheat)` 런타임 토글로 분리해 ON/OFF 각 5회 측정. Unreal Insights의 Timers 탭에서 `GameFrame` 기준 CPU·GPU의 'Frame' Average Inclusive Time을 함께 비교했다. 또한 전역 SpawnActor 집계에는 발사체 외 액터가 섞일 수 있어 `TRACE_CPUPROFILER_EVENT_SCOPE`로 `Projectile_` 구간을 별도 계측해 생성·회수 비용만 다시 비교했다.
 
 **설계 판단**  
-단순 FPS 비교 대신 CPU/GPU를 분리해 병목 위치를 먼저 파악. 프레임 병목이 GPU에 있음을 확인했고, 발사체 풀링의 절감분이 프레임타임의 **0.01% 미만**으로 측정 편차 범위 내에 있어 FPS 개선을 수치로 주장하지 않기로 결정. 스폰 빈도가 더 높은 시나리오에서는 효과가 있을 수 있으므로 풀 구조 자체는 유지.
+전체 프레임과 발사체 처리 경로를 분리해서 해석했다. 스코프 1회 평균 기준으로 `SpawnActor + Destroy`는 **0.3329 ms**, `PoolGet + PoolReturn`은 **0.0543 ms**로 발사체 lifecycle 처리 비용 자체는 감소했다. 반면 5회 측정한 CPU `GameFrame` 평균은 풀링 ON **23.504 ms**, OFF **23.616 ms**였고, 회차별 차이의 방향이 일정하지 않아 평균 차이보다 측정 변동이 더 컸다. 따라서 특정 코드 경로가 빨라졌다는 결과를 전체 FPS 개선으로 확대 해석하지 않기로 했다.
 
 **결과**  
-이 프로젝트 조건에서는 풀링의 FPS 개선 효과가 측정 편차를 넘지 못함을 확인. 검증 방법론(CVar 토글 + CPU 프로파일러 격리)은 이후 다른 최적화 항목에도 재사용 가능.
+이 프로젝트 조건에서는 풀링으로 발사체 생성·회수 경로의 비용이 감소하는 것은 확인했지만, 전체 `GameFrame`에서는 반복 측정 편차를 넘는 일관된 개선을 확인하지 못했다. 따라서 FPS 개선 수치는 주장하지 않고, 검증 방법론(CVar 토글 + 커스텀 CPU 프로파일러 구간 격리)을 이후 최적화 항목에도 재사용할 수 있는 경험으로 정리했다.
 
 ---
 
