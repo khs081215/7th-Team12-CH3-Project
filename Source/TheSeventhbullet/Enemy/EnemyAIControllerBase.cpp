@@ -148,7 +148,7 @@ void AEnemyAIControllerBase::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulu
 		else
 		{
 			//Prediction 자극을 0.5초 뒤 예상 위치에 남김.
-			UAISense_Prediction::RequestPawnPredictionEvent(GetPawn(),Actor,0.25f);
+			UAISense_Prediction::RequestPawnPredictionEvent(GetPawn(),Actor,0.5f);
 			BBComp->ClearValue(TEXT("TargetActor"));
 		}
 		

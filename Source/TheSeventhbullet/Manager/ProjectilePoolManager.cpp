@@ -17,7 +17,7 @@ void UProjectilePoolManager::Initialize(FSubsystemCollectionBase& SubsystemColle
 	
 	ProjectileTransform.SetLocation(FVector(-2000.0f, -2000.0f, 0.0f));
 	
-	for (int32 i=0;i<50;i++)
+	for (int32 i=0;i<PoolSize;i++)
 	{
 		AProjectileActor* Projectile=GetWorld()->SpawnActor<AProjectileActor>();
 		Projectile->SetActorTransform(ProjectileTransform);
@@ -29,11 +29,11 @@ void UProjectilePoolManager::Initialize(FSubsystemCollectionBase& SubsystemColle
 
 AProjectileActor* UProjectilePoolManager::GetProjectile()
 {
-	for (int32 i=0;i<50;i++)
+	 for (AProjectileActor* Projectile : ProjectilePool)
 	{
-		if (ProjectilePool[i]->IsHidden())
+		if (Projectile->IsHidden())
 		{
-			return ProjectilePool[i];
+			return Projectile;
 		}
 	}
 	return nullptr;

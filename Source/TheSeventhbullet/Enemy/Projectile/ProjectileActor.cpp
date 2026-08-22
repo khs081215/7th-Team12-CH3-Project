@@ -68,7 +68,6 @@ void AProjectileActor::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor
 		{
 			TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_Destroy);
 			Destroy();
-			UE_LOG(LogTemp,Warning,TEXT("Destroyed"));
 		}
 		else
 		{
@@ -157,7 +156,6 @@ void AProjectileActor::LifeTimeEnd()
 		{
 			TRACE_CPUPROFILER_EVENT_SCOPE(Projectile_Destroy);
 			Destroy();
-			UE_LOG(LogTemp,Warning,TEXT("Destroyed"));
 		}
 		else
 		{

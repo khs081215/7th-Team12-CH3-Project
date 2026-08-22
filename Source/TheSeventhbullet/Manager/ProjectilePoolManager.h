@@ -27,4 +27,7 @@ private:
 	FTransform ProjectileTransform;
 	
 	TArray<TObjectPtr<AProjectileActor>> ProjectilePool;
+	
+	UPROPERTY(EditDefaultsOnly)
+	int32 PoolSize = 50;
 };
